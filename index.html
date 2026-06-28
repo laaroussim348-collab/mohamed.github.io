@@ -841,23 +841,23 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
   #fullMapTopBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 2001;
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px;
-    background: rgba(8, 24, 17, 0.92);
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    padding: calc(4px + env(safe-area-inset-top, 0px)) 8px 4px;
+    background: rgba(8, 24, 17, 0.88);
   }
-  #fullMapTopBar .title { color: white; font-weight: 700; font-size: 12.5px; line-height: 1.2; }
-  #fullMapTopBar .count { color: #cfe8da; font-size: 10.5px; margin-top: 1px; }
+  #fullMapTopBar .title { color: white; font-weight: 700; font-size: 11px; line-height: 1.1; }
+  #fullMapTopBar .count { color: #cfe8da; font-size: 10px; margin-top: 1px; }
   #fullMapCloseBtn {
     background: white; color: var(--manhole-deep); border: none; border-radius: 50%;
-    width: 30px; height: 30px; font-weight: 700; font-size: 14px; flex-shrink: 0;
+    width: 26px; height: 26px; font-weight: 700; font-size: 13px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
   }
 
   /* Bouton "Ma position" : petit bouton compact à côté de "Dessiner un collecteur",
      plutôt qu'un gros bouton flottant séparé qui prenait trop de place. */
   #myLocationBtn {
-    flex: 0 0 48px; height: 48px; border-radius: 10px; border: none;
-    background: white; color: var(--manhole-deep); font-size: 19px;
+    flex: 0 0 40px; height: 40px; border-radius: 8px; border: none;
+    background: white; color: var(--manhole-deep); font-size: 17px;
     display: flex; align-items: center; justify-content: center;
   }
   #myLocationBtn.tracking { background: #1a73e8; color: white; }
@@ -879,17 +879,17 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   #fullMapBottomBar {
     position: absolute; bottom: 0; left: 0; right: 0; z-index: 2001;
-    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-    background: rgba(8, 24, 17, 0.94);
-    display: flex; flex-direction: column; align-items: stretch; gap: 5px;
+    padding: 5px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    background: rgba(8, 24, 17, 0.88);
+    display: flex; flex-direction: column; align-items: stretch; gap: 3px;
   }
-  .bottom-bar-row { display: flex; gap: 8px; align-items: stretch; }
+  .bottom-bar-row { display: flex; gap: 6px; align-items: stretch; }
   .draw-mode-btn {
-    flex: 1; border: none; border-radius: 10px; padding: 11px 14px;
-    font-weight: 700; font-size: 14px; background: var(--manhole); color: white;
+    flex: 1; border: none; border-radius: 8px; padding: 8px 10px;
+    font-weight: 700; font-size: 13px; background: var(--manhole); color: white;
   }
   .draw-mode-btn.active { background: #c0392b; }
-  .draw-mode-hint { color: #cfe8da; font-size: 12px; text-align: center; min-height: 14px; }
+  .draw-mode-hint { color: #cfe8da; font-size: 11px; text-align: center; min-height: 12px; }
 
   /* Étiquette de nom sur la carte réduite (aperçu en haut de page, lecture seule) */
   .map-label-regard {
@@ -1332,50 +1332,123 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return c.toDataURL();
   })();
 
-  // Couche de tuiles avec cache IndexedDB
+  // Couche de tuiles avec cache IndexedDB + remontée aux tuiles parentes
+  // Quand une tuile au zoom Z n'est pas en cache (hors ligne), on cherche
+  // la tuile parente au zoom Z-1 et on l'agrandit/recadre pour couvrir la
+  // zone — ce qui évite l'écran gris quand on zoome trop par rapport aux
+  // tuiles téléchargées (image floue mais lisible).
   const OfflineTileLayer = L.TileLayer.extend({
+
+    _keyForCoords: function(x, y, z) {
+      // Calcule la clé IndexedDB d'une tuile à des coordonnées données.
+      // On reconstruit l'URL avec getTileUrl en passant un objet coords.
+      const url = this.getTileUrl({ x, y, z });
+      return url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 200);
+    },
+
+    // Cherche récursivement une tuile parente dans le cache et la recadre.
+    // maxUp : nombre maximum de niveaux de zoom à remonter (défaut 6).
+    _tryParentTile: function(x, y, z, maxUp) {
+      maxUp = (maxUp === undefined) ? 6 : maxUp;
+      if (!tileDB || z <= 1 || maxUp <= 0) return Promise.resolve(null);
+      const layer = this;
+      const pz = z - 1, px = Math.floor(x / 2), py = Math.floor(y / 2);
+      const parentKey = this._keyForCoords(px, py, pz);
+      return dbGet(tileDB, parentKey).then(function(parentData) {
+        if (parentData) {
+          // Recadrer le quart qui correspond à notre tuile enfant
+          return new Promise(function(resolve) {
+            const tmpImg = new Image();
+            tmpImg.onload = function() {
+              const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+              const cx = cv.getContext('2d');
+              const qx = (x % 2) * 128;   // 0 = gauche, 128 = droite
+              const qy = (y % 2) * 128;   // 0 = haut,   128 = bas
+              cx.drawImage(tmpImg, qx, qy, 128, 128, 0, 0, 256, 256);
+              resolve(cv.toDataURL('image/jpeg', 0.80));
+            };
+            tmpImg.onerror = function() { resolve(null); };
+            tmpImg.src = parentData;
+          });
+        } else {
+          // Pas trouvé à ce niveau : remonter encore
+          return layer._tryParentTile(px, py, pz, maxUp - 1).then(function(grandParentData) {
+            if (!grandParentData) return null;
+            // Recadrer depuis le grand-parent (déjà recadré au niveau intermédiaire)
+            return new Promise(function(resolve) {
+              const tmpImg = new Image();
+              tmpImg.onload = function() {
+                const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+                const cx = cv.getContext('2d');
+                const qx = (x % 2) * 128;
+                const qy = (y % 2) * 128;
+                cx.drawImage(tmpImg, qx, qy, 128, 128, 0, 0, 256, 256);
+                resolve(cv.toDataURL('image/jpeg', 0.80));
+              };
+              tmpImg.onerror = function() { resolve(null); };
+              tmpImg.src = grandParentData;
+            });
+          });
+        }
+      }).catch(function() { return null; });
+    },
+
     createTile: function(coords, done) {
       const img = document.createElement('img');
       img.alt = '';
+      const { x, y, z } = coords;
       const url = this.getTileUrl(coords);
-      const key = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0,200);
+      const key = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 200);
+      const layer = this;
 
-      const tryNetwork = () => {
+      const showFallback = function(dataUrl) {
+        img.crossOrigin = null;
+        img.src = dataUrl || OFFLINE_TILE_DATA_URL;
+        done(null, img);
+      };
+
+      const tryParentThenShow = function() {
+        layer._tryParentTile(x, y, z).then(function(upscaled) {
+          showFallback(upscaled);
+        });
+      };
+
+      const tryNetwork = function() {
         img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          // Tenter de cacher via canvas (fonctionne si le serveur autorise CORS)
+        img.onload = function() {
+          // Mettre en cache via canvas (si CORS autorisé par le serveur)
           if (tileDB) {
             try {
-              const cv = document.createElement('canvas'); cv.width=256; cv.height=256;
-              const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0);
-              const d = cv.toDataURL('image/jpeg', 0.85);
-              dbSet(tileDB, key, d).catch(()=>{});
-            } catch(e) { /* CORS bloqué : pas de cache, c'est OK */ }
+              const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+              cv.getContext('2d').drawImage(img, 0, 0);
+              dbSet(tileDB, key, cv.toDataURL('image/jpeg', 0.85)).catch(function(){});
+            } catch(e) { /* Canvas tainted (CORS refusé) — pas de cache, OK */ }
           }
           done(null, img);
         };
-        img.onerror = () => {
-          // Réseau en échec : chercher dans le cache
+        img.onerror = function() {
+          // Réseau en échec : cache exact → tuile parente → placeholder
           if (tileDB) {
-            dbGet(tileDB, key).then(cached => {
-              img.crossOrigin = null;
-              img.src = cached || OFFLINE_TILE_DATA_URL;
-              done(null, img);
+            dbGet(tileDB, key).then(function(cached) {
+              if (cached) { showFallback(cached); }
+              else { tryParentThenShow(); }
             });
           } else {
-            img.src = OFFLINE_TILE_DATA_URL;
-            done(null, img);
+            tryParentThenShow();
           }
         };
         img.src = url;
       };
 
-      // D'abord chercher dans le cache, puis réseau si absent
+      // Ordre de priorité : cache exact → réseau → tuile parente → placeholder
       if (tileDB) {
-        dbGet(tileDB, key).then(cached => {
+        dbGet(tileDB, key).then(function(cached) {
           if (cached) {
             img.src = cached;
             done(null, img);
+          } else if (!navigator.onLine) {
+            // Hors ligne et pas en cache : chercher une tuile parente
+            tryParentThenShow();
           } else {
             tryNetwork();
           }
@@ -1409,9 +1482,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
     const bounds = targetMap.getBounds();
     const currentZoom = Math.floor(targetMap.getZoom());
-    // Télécharger pour le zoom actuel ± 1 niveau (pas trop de tuiles)
-    const zoomMin = Math.max(currentZoom - 1, 1);
-    const zoomMax = Math.min(currentZoom + 2, 19);
+    // Télécharger du zoom 5 (vue régionale) jusqu'au zoom actuel + 4
+    // pour que la carte soit utilisable même en zoomant beaucoup sur le terrain.
+    const zoomMin = 5;
+    const zoomMax = Math.min(currentZoom + 4, 19);
 
     // Calculer toutes les tuiles nécessaires (OSM uniquement - CORS supporté)
     const osmUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -1429,11 +1503,13 @@ svg.leaflet-image-layer.leaflet-interactive path {
       }
     }
 
-    if (tiles.length > 800) {
-      alert('Trop de tuiles à télécharger (' + tiles.length + '). Dézoomez la carte ou réduisez la zone, puis réessayez.');
-      cachingInProgress = false;
-      if (btn) btn.disabled = false;
-      return;
+    if (tiles.length > 3000) {
+      const ok = confirm('Zone très grande : ' + tiles.length + ' tuiles à télécharger (~' + Math.round(tiles.length * 15 / 1024) + ' MB). Continuer ? Dézoomez la carte pour réduire la zone.');
+      if (!ok) {
+        cachingInProgress = false;
+        if (btn) btn.disabled = false;
+        return;
+      }
     }
 
     if (status) status.textContent = '⬇️ Téléchargement de ' + tiles.length + ' tuiles…';
@@ -1485,7 +1561,15 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   function updateCacheInfo(count) {
     const el = document.getElementById('cacheInfo');
-    if (el) el.textContent = count > 0 ? '💾 ' + count + ' tuiles en cache (fond Plan disponible hors ligne)' : '💾 Aucune tuile en cache';
+    if (!el) return;
+    if (count > 0) {
+      const sizeMB = (count * 15 / 1024).toFixed(1);
+      el.innerHTML = '💾 <b>' + count + ' tuiles</b> en cache (~' + sizeMB + ' MB) — fond Plan disponible hors ligne<br>'
+        + '<span style="font-size:11px;color:#5b6e64;">Stockage : mémoire interne de l'app (IndexedDB). '
+        + 'Sur Android : données de l'application → effacer pour libérer l'espace.</span>';
+    } else {
+      el.textContent = '💾 Aucune tuile en cache — utilisez le bouton ci-dessus quand vous avez du réseau.';
+    }
   }
 
   // Bannière hors-ligne
