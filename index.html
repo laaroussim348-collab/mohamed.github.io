@@ -1564,9 +1564,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     if (!el) return;
     if (count > 0) {
       const sizeMB = (count * 15 / 1024).toFixed(1);
-      el.innerHTML = '💾 <b>' + count + ' tuiles</b> en cache (~' + sizeMB + ' MB) — fond Plan disponible hors ligne<br>'
-        + '<span style="font-size:11px;color:#5b6e64;">Stockage : mémoire interne de l'app (IndexedDB). '
-        + 'Sur Android : données de l'application → effacer pour libérer l'espace.</span>';
+      el.innerHTML = `💾 <b>${count} tuiles</b> en cache (~${sizeMB} MB) — fond Plan disponible hors ligne<br><span style="font-size:11px;color:#5b6e64;">Stockage : mémoire interne de l\u2019app (IndexedDB). Android : Paramètres → Appli → Vider données.</span>`;
     } else {
       el.textContent = '💾 Aucune tuile en cache — utilisez le bouton ci-dessus quand vous avez du réseau.';
     }
