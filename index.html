@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
-<title>Diagnostic Réseau d'Assainissement — Hors ligne</title>
+<title>Diagnostic Réseau d'Assainissement</title>
 
 <!-- PWA : permet d'installer cette page comme une app à part entière (icône sur
      l'écran d'accueil, sans barre de navigateur), en utilisant directement le
@@ -842,22 +842,22 @@ svg.leaflet-image-layer.leaflet-interactive path {
   #fullMapTopBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 2001;
     display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    padding: calc(4px + env(safe-area-inset-top, 0px)) 8px 4px;
+    padding: calc(3px + env(safe-area-inset-top, 0px)) 8px 3px;
     background: rgba(8, 24, 17, 0.88);
   }
   #fullMapTopBar .title { color: white; font-weight: 700; font-size: 11px; line-height: 1.1; }
-  #fullMapTopBar .count { color: #cfe8da; font-size: 10px; margin-top: 1px; }
+  #fullMapTopBar .count { color: #cfe8da; font-size: 9.5px; margin-top: 0; }
   #fullMapCloseBtn {
     background: white; color: var(--manhole-deep); border: none; border-radius: 50%;
-    width: 26px; height: 26px; font-weight: 700; font-size: 13px; flex-shrink: 0;
+    width: 24px; height: 24px; font-weight: 700; font-size: 12px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
   }
 
   /* Bouton "Ma position" : petit bouton compact à côté de "Dessiner un collecteur",
      plutôt qu'un gros bouton flottant séparé qui prenait trop de place. */
   #myLocationBtn {
-    flex: 0 0 40px; height: 40px; border-radius: 8px; border: none;
-    background: white; color: var(--manhole-deep); font-size: 17px;
+    flex: 0 0 38px; height: 38px; border-radius: 8px; border: none;
+    background: white; color: var(--manhole-deep); font-size: 16px;
     display: flex; align-items: center; justify-content: center;
   }
   #myLocationBtn.tracking { background: #1a73e8; color: white; }
@@ -879,7 +879,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   #fullMapBottomBar {
     position: absolute; bottom: 0; left: 0; right: 0; z-index: 2001;
-    padding: 5px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    padding: 5px 8px calc(5px + env(safe-area-inset-bottom, 0px));
     background: rgba(8, 24, 17, 0.88);
     display: flex; flex-direction: column; align-items: stretch; gap: 3px;
   }
@@ -889,7 +889,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     font-weight: 700; font-size: 13px; background: var(--manhole); color: white;
   }
   .draw-mode-btn.active { background: #c0392b; }
-  .draw-mode-hint { color: #cfe8da; font-size: 11px; text-align: center; min-height: 12px; }
+  .draw-mode-hint { color: #cfe8da; font-size: 11px; text-align: center; min-height: 0; }
 
   /* Étiquette de nom sur la carte réduite (aperçu en haut de page, lecture seule) */
   .map-label-regard {
@@ -1023,10 +1023,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <h1>Diagnostic Réseau d'Assainissement</h1>
   <p>Levé terrain — regards et conduites, export KML</p>
 </header>
-<div id="offlineBanner" style="display:none;background:#7c3aed;color:white;padding:10px 16px;align-items:center;gap:10px;font-size:13.5px;font-weight:600;">
-  <span>📡</span>
-  <span>Mode hors ligne — vos données sont sauvegardées localement. Fond de carte visible si pré-téléchargé.</span>
-</div>
+<div id="offlineBanner" style="display:none;background:#7c3aed;color:white;padding:6px 14px;align-items:center;gap:8px;font-size:12.5px;font-weight:600;z-index:9999;"><span>📡</span><span>Hors ligne — fond de carte visible si pré-téléchargé (Plan/OSM uniquement)</span></div>
 
 <main>
 
@@ -1050,11 +1047,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </div>
     <input type="file" id="importKmlInput" accept=".kml" style="display:none" onchange="handleImportKmlFile(event)">
     <div class="status-msg" id="posStatus"></div>
-    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap || map)" style="margin-top:8px;">
-      ⬇️ Télécharger la zone visible (hors ligne)
-    </button>
-    <div class="status-msg" id="cacheStatus"></div>
-    <div class="status-msg" id="cacheInfo" style="color:#2d6a4f;font-size:12px;margin-top:4px;"></div>
+    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap||map)" style="margin-top:6px;">⬇️ Télécharger la zone visible (hors ligne)</button>
+    <div id="cacheStatus" class="status-msg" style="margin-top:3px;"></div>
+    <div id="cacheInfo" style="font-size:11.5px;color:#2d6a4f;margin-top:2px;line-height:1.4;"></div>
     <div class="status-msg" id="importStatus"></div>
   </div>
 
@@ -1244,14 +1239,14 @@ svg.leaflet-image-layer.leaflet-interactive path {
   let driveTokenExpiresAt = 0;
 
 
-  // ====================================================================
-  // CACHE HORS-LIGNE DES TUILES DE CARTE (IndexedDB)
-  // Permet d'utiliser l'application sans internet une fois les tuiles
-  // pré-téléchargées dans une zone avec connexion.
-  // ====================================================================
-  const TILE_DB_NAME = 'assainissement-tiles';
+  // ===========================================================================
+  // SYSTÈME DE CACHE HORS-LIGNE — IndexedDB
+  // Seules les tuiles OSM (CORS autorisé) sont mises en cache.
+  // Google/Esri se chargent normalement en ligne mais ne peuvent pas être cachés.
+  // ===========================================================================
+  const TILE_DB_NAME    = 'assainissement-tiles-v1';
   const TILE_DB_VERSION = 1;
-  const TILE_STORE_NAME = 'tiles';
+  const TILE_STORE      = 'tiles';
   let tileDB = null;
 
   function openTileDB() {
@@ -1259,326 +1254,221 @@ svg.leaflet-image-layer.leaflet-interactive path {
       const req = indexedDB.open(TILE_DB_NAME, TILE_DB_VERSION);
       req.onupgradeneeded = e => {
         const db = e.target.result;
-        if (!db.objectStoreNames.contains(TILE_STORE_NAME)) {
-          const store = db.createObjectStore(TILE_STORE_NAME, { keyPath: 'key' });
-          store.createIndex('ts', 'ts');
-        }
+        if (!db.objectStoreNames.contains(TILE_STORE))
+          db.createObjectStore(TILE_STORE, { keyPath: 'k' });
       };
       req.onsuccess = e => resolve(e.target.result);
-      req.onerror = e => reject(e.target.error);
+      req.onerror   = e => reject(e.target.error);
     });
   }
-
-  function dbGet(db, key) {
-    return new Promise((resolve) => {
+  function dbGet(key) {
+    return new Promise(res => {
       try {
-        const tx = db.transaction(TILE_STORE_NAME, 'readonly');
-        const req = tx.objectStore(TILE_STORE_NAME).get(key);
-        req.onsuccess = e => resolve(e.target.result ? e.target.result.data : null);
-        req.onerror = () => resolve(null);
-      } catch(e) { resolve(null); }
+        const tx = tileDB.transaction(TILE_STORE, 'readonly');
+        const rq = tx.objectStore(TILE_STORE).get(key);
+        rq.onsuccess = e => res(e.target.result ? e.target.result.d : null);
+        rq.onerror   = () => res(null);
+      } catch(e){ res(null); }
     });
   }
-
-  function dbSet(db, key, data) {
-    return new Promise((resolve) => {
-      try {
-        const tx = db.transaction(TILE_STORE_NAME, 'readwrite');
-        tx.objectStore(TILE_STORE_NAME).put({ key, data, ts: Date.now() });
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => resolve(false);
-      } catch(e) { resolve(false); }
-    });
-  }
-
-  async function dbCount() {
-    if (!tileDB) return 0;
-    return new Promise(resolve => {
-      try {
-        const tx = tileDB.transaction(TILE_STORE_NAME, 'readonly');
-        const req = tx.objectStore(TILE_STORE_NAME).count();
-        req.onsuccess = e => resolve(e.target.result);
-        req.onerror = () => resolve(0);
-      } catch(e) { resolve(0); }
-    });
-  }
-
-  async function dbClear() {
+  function dbSet(key, data) {
     if (!tileDB) return;
-    return new Promise(resolve => {
+    try {
+      const tx = tileDB.transaction(TILE_STORE, 'readwrite');
+      tx.objectStore(TILE_STORE).put({ k: key, d: data });
+    } catch(e){}
+  }
+  function dbCount() {
+    return new Promise(res => {
       try {
-        const tx = tileDB.transaction(TILE_STORE_NAME, 'readwrite');
-        tx.objectStore(TILE_STORE_NAME).clear();
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      } catch(e) { resolve(); }
+        const tx = tileDB.transaction(TILE_STORE, 'readonly');
+        const rq = tx.objectStore(TILE_STORE).count();
+        rq.onsuccess = e => res(e.target.result);
+        rq.onerror   = () => res(0);
+      } catch(e){ res(0); }
     });
   }
 
-  // Gris de remplacement pour les tuiles indisponibles hors-ligne
-  const OFFLINE_TILE_DATA_URL = (function(){
+  // Tuile de remplacement (pas de carte disponible offline)
+  // Simple fond clair sans texte agressif
+  const OFFLINE_TILE = (() => {
     const c = document.createElement('canvas'); c.width = 256; c.height = 256;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle = '#d8e0da';
-    ctx.fillRect(0,0,256,256);
-    ctx.strokeStyle = '#b8cdc0';
-    ctx.lineWidth = 1;
-    for(let i=0;i<256;i+=32){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,256);ctx.stroke();ctx.beginPath();ctx.moveTo(0,i);ctx.lineTo(256,i);ctx.stroke();}
-    ctx.fillStyle = '#8aa898';
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Hors ligne', 128, 120);
-    ctx.fillText('Pas de carte', 128, 136);
+    const x = c.getContext('2d');
+    x.fillStyle = '#e8f0eb'; x.fillRect(0,0,256,256);
+    x.strokeStyle = '#c5d9cc'; x.lineWidth = 0.5;
+    for(let i=0;i<256;i+=32){ x.beginPath();x.moveTo(i,0);x.lineTo(i,256);x.stroke(); x.beginPath();x.moveTo(0,i);x.lineTo(256,i);x.stroke(); }
     return c.toDataURL();
   })();
 
-  // Couche de tuiles avec cache IndexedDB + remontée aux tuiles parentes
-  // Quand une tuile au zoom Z n'est pas en cache (hors ligne), on cherche
-  // la tuile parente au zoom Z-1 et on l'agrandit/recadre pour couvrir la
-  // zone — ce qui évite l'écran gris quand on zoome trop par rapport aux
-  // tuiles téléchargées (image floue mais lisible).
+  // ---------------------------------------------------------------------------
+  // OfflineTileLayer — UNIQUEMENT pour OSM (CORS autorisé = mise en cache OK)
+  // NE PAS utiliser pour Google/Esri (pas de CORS → crossOrigin casserait le chargement)
+  // ---------------------------------------------------------------------------
   const OfflineTileLayer = L.TileLayer.extend({
 
-    _keyForCoords: function(x, y, z) {
-      // Calcule la clé IndexedDB d'une tuile à des coordonnées données.
-      // On reconstruit l'URL avec getTileUrl en passant un objet coords.
-      const url = this.getTileUrl({ x, y, z });
-      return url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 200);
+    // Clé IndexedDB pour des coordonnées z/x/y données
+    _cacheKey(x, y, z) {
+      return `osm_${z}_${x}_${y}`;
     },
 
-    // Cherche récursivement une tuile parente dans le cache et la recadre.
-    // maxUp : nombre maximum de niveaux de zoom à remonter (défaut 6).
-    _tryParentTile: function(x, y, z, maxUp) {
-      maxUp = (maxUp === undefined) ? 6 : maxUp;
-      if (!tileDB || z <= 1 || maxUp <= 0) return Promise.resolve(null);
-      const layer = this;
-      const pz = z - 1, px = Math.floor(x / 2), py = Math.floor(y / 2);
-      const parentKey = this._keyForCoords(px, py, pz);
-      return dbGet(tileDB, parentKey).then(function(parentData) {
-        if (parentData) {
-          // Recadrer le quart qui correspond à notre tuile enfant
-          return new Promise(function(resolve) {
-            const tmpImg = new Image();
-            tmpImg.onload = function() {
-              const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
-              const cx = cv.getContext('2d');
-              const qx = (x % 2) * 128;   // 0 = gauche, 128 = droite
-              const qy = (y % 2) * 128;   // 0 = haut,   128 = bas
-              cx.drawImage(tmpImg, qx, qy, 128, 128, 0, 0, 256, 256);
-              resolve(cv.toDataURL('image/jpeg', 0.80));
-            };
-            tmpImg.onerror = function() { resolve(null); };
-            tmpImg.src = parentData;
-          });
-        } else {
-          // Pas trouvé à ce niveau : remonter encore
-          return layer._tryParentTile(px, py, pz, maxUp - 1).then(function(grandParentData) {
-            if (!grandParentData) return null;
-            // Recadrer depuis le grand-parent (déjà recadré au niveau intermédiaire)
-            return new Promise(function(resolve) {
-              const tmpImg = new Image();
-              tmpImg.onload = function() {
-                const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
-                const cx = cv.getContext('2d');
-                const qx = (x % 2) * 128;
-                const qy = (y % 2) * 128;
-                cx.drawImage(tmpImg, qx, qy, 128, 128, 0, 0, 256, 256);
-                resolve(cv.toDataURL('image/jpeg', 0.80));
-              };
-              tmpImg.onerror = function() { resolve(null); };
-              tmpImg.src = grandParentData;
-            });
-          });
-        }
-      }).catch(function() { return null; });
+    // Cherche une tuile parente dans le cache et recadre le quadrant correspondant.
+    // Remonte jusqu'à 6 niveaux de zoom pour trouver quelque chose.
+    async _fromParent(x, y, z, lvl=0) {
+      if (!tileDB || z <= 0 || lvl >= 6) return null;
+      const pz = z-1, px = x>>1, py = y>>1;
+      const parentData = await dbGet(this._cacheKey(px, py, pz));
+      const source = parentData || await this._fromParent(px, py, pz, lvl+1);
+      if (!source) return null;
+      return new Promise(res => {
+        const img = new Image();
+        img.onload = () => {
+          const cv = document.createElement('canvas'); cv.width=256; cv.height=256;
+          const cx = cv.getContext('2d');
+          // Chaque tuile parente couvre 4 enfants ; on extrait le bon quadrant
+          const qx = (x & 1)*128, qy = (y & 1)*128;
+          cx.drawImage(img, qx, qy, 128, 128, 0, 0, 256, 256);
+          res(cv.toDataURL('image/jpeg', 0.82));
+        };
+        img.onerror = () => res(null);
+        img.src = source;
+      });
     },
 
-    createTile: function(coords, done) {
-      const img = document.createElement('img');
-      img.alt = '';
-      const { x, y, z } = coords;
+    createTile(coords, done) {
+      const img = document.createElement('img'); img.alt = '';
+      const {x, y, z} = coords;
       const url = this.getTileUrl(coords);
-      const key = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 200);
+      const key = this._cacheKey(x, y, z);
       const layer = this;
 
-      const showFallback = function(dataUrl) {
-        img.crossOrigin = null;
-        img.src = dataUrl || OFFLINE_TILE_DATA_URL;
-        done(null, img);
+      const show = d => { img.src = d || OFFLINE_TILE; done(null, img); };
+
+      const fromCacheOrParent = async () => {
+        const cached = await dbGet(key);
+        if (cached) { show(cached); return; }
+        const upscaled = await layer._fromParent(x, y, z);
+        show(upscaled);   // null → OFFLINE_TILE
       };
 
-      const tryParentThenShow = function() {
-        layer._tryParentTile(x, y, z).then(function(upscaled) {
-          showFallback(upscaled);
-        });
-      };
-
-      const tryNetwork = function() {
-        img.crossOrigin = 'anonymous';
-        img.onload = function() {
-          // Mettre en cache via canvas (si CORS autorisé par le serveur)
-          if (tileDB) {
-            try {
-              const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
-              cv.getContext('2d').drawImage(img, 0, 0);
-              dbSet(tileDB, key, cv.toDataURL('image/jpeg', 0.85)).catch(function(){});
-            } catch(e) { /* Canvas tainted (CORS refusé) — pas de cache, OK */ }
-          }
+      const loadFromNet = () => {
+        img.crossOrigin = 'anonymous';   // OSM autorise le CORS — safe
+        img.onload = () => {
+          // Mettre en cache via canvas (fonctionne car OSM envoie les bons headers)
+          try {
+            const cv = document.createElement('canvas'); cv.width=256; cv.height=256;
+            cv.getContext('2d').drawImage(img,0,0);
+            dbSet(key, cv.toDataURL('image/jpeg', 0.85));
+          } catch(e){}
           done(null, img);
         };
-        img.onerror = function() {
-          // Réseau en échec : cache exact → tuile parente → placeholder
-          if (tileDB) {
-            dbGet(tileDB, key).then(function(cached) {
-              if (cached) { showFallback(cached); }
-              else { tryParentThenShow(); }
-            });
-          } else {
-            tryParentThenShow();
-          }
-        };
+        img.onerror = () => fromCacheOrParent();   // réseau KO → cache → parent → placeholder
         img.src = url;
       };
 
-      // Ordre de priorité : cache exact → réseau → tuile parente → placeholder
-      if (tileDB) {
-        dbGet(tileDB, key).then(function(cached) {
-          if (cached) {
-            img.src = cached;
-            done(null, img);
-          } else if (!navigator.onLine) {
-            // Hors ligne et pas en cache : chercher une tuile parente
-            tryParentThenShow();
-          } else {
-            tryNetwork();
-          }
-        });
-      } else {
-        tryNetwork();
-      }
+      if (!tileDB) { loadFromNet(); return img; }
+
+      // Cache hit → affichage immédiat sans réseau
+      dbGet(key).then(cached => {
+        if (cached) { img.src = cached; done(null, img); }
+        else if (!navigator.onLine) fromCacheOrParent();
+        else loadFromNet();
+      });
       return img;
     }
   });
 
   function offlineTileLayer(url, opts) { return new OfflineTileLayer(url, opts); }
 
-  // Init du cache de tuiles
-  openTileDB().then(db => {
-    tileDB = db;
-    dbCount().then(n => updateCacheInfo(n));
-  }).catch(e => console.warn('IndexedDB indisponible (tuiles non mises en cache)', e));
+  // Ouvrir la base IndexedDB au démarrage
+  openTileDB()
+    .then(db => { tileDB = db; return dbCount(); })
+    .then(n  => updateCacheInfo(n))
+    .catch(e => console.warn('IndexedDB indisponible', e));
 
-  // Téléchargement préventif des tuiles de la zone visible
-  let cachingInProgress = false;
+  // ---------------------------------------------------------------------------
+  // Pré-téléchargement des tuiles OSM de la zone visible
+  // Zoom 5 → zoom actuel + 4 (max 19) pour couvrir navigation + terrain
+  // ---------------------------------------------------------------------------
+  let _caching = false;
   async function preCacheTiles(targetMap) {
-    if (cachingInProgress) return;
-    if (!navigator.onLine) { alert('Vous êtes hors ligne. Connectez-vous pour pré-télécharger les tuiles.'); return; }
-    if (!tileDB) { alert('Le stockage IndexedDB n\'est pas disponible sur cet appareil.'); return; }
+    if (_caching) return;
+    if (!navigator.onLine) { alert('Connectez-vous au réseau pour télécharger les tuiles.'); return; }
+    if (!tileDB)           { alert('Stockage IndexedDB non disponible sur cet appareil.'); return; }
 
-    cachingInProgress = true;
+    _caching = true;
     const btn = document.getElementById('cacheBtn');
-    const status = document.getElementById('cacheStatus');
+    const statusEl = document.getElementById('cacheStatus');
     if (btn) btn.disabled = true;
 
-    const bounds = targetMap.getBounds();
-    const currentZoom = Math.floor(targetMap.getZoom());
-    // Télécharger du zoom 5 (vue régionale) jusqu'au zoom actuel + 4
-    // pour que la carte soit utilisable même en zoomant beaucoup sur le terrain.
-    const zoomMin = 5;
-    const zoomMax = Math.min(currentZoom + 4, 19);
+    const bounds  = targetMap.getBounds();
+    const curZoom = Math.floor(targetMap.getZoom());
+    const zMin = 5, zMax = Math.min(curZoom + 4, 19);
 
-    // Calculer toutes les tuiles nécessaires (OSM uniquement - CORS supporté)
-    const osmUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    const subdomains = ['a', 'b', 'c'];
-    let tiles = [];
-    for (let z = zoomMin; z <= zoomMax; z++) {
-      const tileMin = latLngToTileXY(bounds.getSouth(), bounds.getWest(), z);
-      const tileMax = latLngToTileXY(bounds.getNorth(), bounds.getEast(), z);
-      const x0 = Math.min(tileMin.x, tileMax.x), x1 = Math.max(tileMin.x, tileMax.x);
-      const y0 = Math.min(tileMin.y, tileMax.y), y1 = Math.max(tileMin.y, tileMax.y);
-      for (let x = x0; x <= x1; x++) {
-        for (let y = y0; y <= y1; y++) {
-          tiles.push({ x, y, z });
-        }
-      }
+    const ll2tile = (lat, lng, z) => {
+      const n = 1 << z;
+      return {
+        x: Math.floor((lng + 180) / 360 * n),
+        y: Math.floor((1 - Math.log(Math.tan(lat * Math.PI/180) + 1/Math.cos(lat * Math.PI/180)) / Math.PI) / 2 * n)
+      };
+    };
+
+    const tiles = [];
+    for (let z = zMin; z <= zMax; z++) {
+      const a = ll2tile(bounds.getSouth(), bounds.getWest(), z);
+      const b = ll2tile(bounds.getNorth(), bounds.getEast(), z);
+      for (let x = Math.min(a.x,b.x); x <= Math.max(a.x,b.x); x++)
+        for (let y = Math.min(a.y,b.y); y <= Math.max(a.y,b.y); y++)
+          tiles.push({x, y, z});
     }
 
-    if (tiles.length > 3000) {
-      const ok = confirm('Zone très grande : ' + tiles.length + ' tuiles à télécharger (~' + Math.round(tiles.length * 15 / 1024) + ' MB). Continuer ? Dézoomez la carte pour réduire la zone.');
-      if (!ok) {
-        cachingInProgress = false;
-        if (btn) btn.disabled = false;
-        return;
-      }
+    if (tiles.length > 4000) {
+      const ok = confirm(`${tiles.length} tuiles à télécharger (~${Math.round(tiles.length*15/1024)} MB). Dézoomez pour réduire la zone. Continuer ?`);
+      if (!ok) { _caching=false; if(btn) btn.disabled=false; return; }
     }
 
-    if (status) status.textContent = '⬇️ Téléchargement de ' + tiles.length + ' tuiles…';
-    let done = 0, errors = 0;
+    const subs = ['a','b','c'];
+    let done=0, skipped=0, errors=0;
+    const OSM_TPL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
     for (const t of tiles) {
-      const sub = subdomains[Math.abs(t.x + t.y) % 3];
-      const url = osmUrl.replace('{s}', sub).replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y);
-      const key = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0,200);
-      // Vérifier d'abord si déjà en cache
-      const existing = await dbGet(tileDB, key);
-      if (existing) { done++; continue; }
+      const key = `osm_${t.z}_${t.x}_${t.y}`;
+      if (await dbGet(key)) { skipped++; done++; continue; }
+      const sub = subs[(t.x + t.y) % 3];
+      const url = OSM_TPL.replace('{s}',sub).replace('{z}',t.z).replace('{x}',t.x).replace('{y}',t.y);
       try {
-        const resp = await fetch(url, { mode: 'cors' });
-        if (resp.ok) {
-          const blob = await resp.blob();
-          const dataUrl = await new Promise((res, rej) => {
-            const reader = new FileReader();
-            reader.onload = () => res(reader.result);
-            reader.onerror = rej;
-            reader.readAsDataURL(blob);
-          });
-          await dbSet(tileDB, key, dataUrl);
-          done++;
-        } else { errors++; }
-      } catch(e) { errors++; }
-      if (status && (done + errors) % 20 === 0) {
-        status.textContent = '⬇️ ' + (done + errors) + '/' + tiles.length + ' tuiles…';
-      }
+        const resp = await fetch(url, { mode:'cors' });
+        if (!resp.ok) throw 0;
+        const blob = await resp.blob();
+        const dataUrl = await new Promise((r,j)=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.onerror=j; fr.readAsDataURL(blob); });
+        dbSet(key, dataUrl);
+        done++;
+      } catch(e){ errors++; }
+      if (statusEl && (done+errors) % 25 === 0)
+        statusEl.textContent = `\u2b07\ufe0f ${done+errors}/${tiles.length} tuiles\u2026`;
     }
 
-    cachingInProgress = false;
+    _caching = false;
     if (btn) btn.disabled = false;
     const total = await dbCount();
     updateCacheInfo(total);
-    if (status) {
-      status.textContent = (errors === 0)
-        ? '✅ ' + done + ' tuiles OSM sauvegardées. La zone est maintenant disponible hors ligne (fond Plan uniquement).'
-        : '⚠️ ' + done + ' tuiles OK, ' + errors + ' erreurs. Réessayez si nécessaire.';
-    }
+    if (statusEl)
+      statusEl.textContent = errors===0
+        ? `\u2705 ${done} tuiles OSM sauvegard\u00e9es (${skipped} d\u00e9j\u00e0 en cache). Zone disponible hors ligne !`
+        : `\u26a0\ufe0f ${done} OK, ${errors} erreurs. V\u00e9rifiez votre connexion.`;
   }
 
-  function latLngToTileXY(lat, lng, zoom) {
-    const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
-    const latRad = lat * Math.PI / 180;
-    const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, zoom));
-    return { x, y };
-  }
-
-  function updateCacheInfo(count) {
+  function updateCacheInfo(n) {
     const el = document.getElementById('cacheInfo');
     if (!el) return;
-    if (count > 0) {
-      const sizeMB = (count * 15 / 1024).toFixed(1);
-      el.innerHTML = `💾 <b>${count} tuiles</b> en cache (~${sizeMB} MB) — fond Plan disponible hors ligne<br><span style="font-size:11px;color:#5b6e64;">Stockage : mémoire interne de l\u2019app (IndexedDB). Android : Paramètres → Appli → Vider données.</span>`;
-    } else {
-      el.textContent = '💾 Aucune tuile en cache — utilisez le bouton ci-dessus quand vous avez du réseau.';
-    }
+    el.innerHTML = n > 0
+      ? `\ud83d\udcbe <b>${n} tuiles OSM</b> en cache (~${(n*15/1024).toFixed(1)} MB) \u2014 fond Plan disponible hors ligne`
+      : '\ud83d\udcbe Aucune tuile en cache \u2014 appuyez sur le bouton ci-dessus quand vous avez du r\u00e9seau.';
   }
 
   // Bannière hors-ligne
   function updateOfflineBanner() {
-    const banner = document.getElementById('offlineBanner');
-    if (!banner) return;
-    if (navigator.onLine) {
-      banner.style.display = 'none';
-    } else {
-      banner.style.display = 'flex';
-    }
+    const b = document.getElementById('offlineBanner');
+    if (b) b.style.display = navigator.onLine ? 'none' : 'flex';
   }
   window.addEventListener('online',  updateOfflineBanner);
   window.addEventListener('offline', updateOfflineBanner);
@@ -1600,19 +1490,19 @@ svg.leaflet-image-layer.leaflet-interactive path {
   // juste parce que le fichier a changé sur le serveur, il faut explicitement le
   // désinscrire. On enregistre ensuite sw-v2.js (nom différent de sw.js) pour que
   // le navigateur le traite sans ambiguïté comme un nouveau Service Worker.
-  // Service Worker désactivé dans la version hors-ligne autonome
+  // Service Worker désactivé (version autonome hors-ligne)
 
   function addBaseLayers(targetMap) {
     // Fond satellite Google — imagerie généralement plus récente et plus détaillée
     // qu'Esri dans de nombreuses régions (Maroc inclus). Utilisé par défaut.
-    const googleSatLayer = offlineTileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+    const googleSatLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
       maxZoom: 21,
       maxNativeZoom: 20,
       subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
       attribution: '&copy; Google'
     });
     // Variante "hybride" Google : satellite + noms de rues/lieux superposés
-    const googleHybridLayer = offlineTileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+    const googleHybridLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
       maxZoom: 21,
       maxNativeZoom: 20,
       subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
@@ -1624,12 +1514,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
     // maxNativeZoom plus bas que maxZoom : au-delà de la résolution réellement
     // disponible à cet endroit, Leaflet agrandit la dernière tuile existante
     // au lieu d'afficher du vide.
-    const satLayer = offlineTileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 21,
       maxNativeZoom: 19,
       attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, GIS User Community'
     });
-    const labelLayer = offlineTileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+    const labelLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 21,
       maxNativeZoom: 19,
       attribution: 'Esri'
@@ -1638,6 +1528,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
     // Fond plan (rues), mis à jour en continu par la communauté OpenStreetMap.
     // Couverture mondiale fiable même là où l'imagerie satellite haute résolution manque.
+    // OSM : seule couche qui supporte le CORS et peut donc être mise en cache hors-ligne
     const planLayer = offlineTileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors'
