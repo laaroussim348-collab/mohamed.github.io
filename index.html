@@ -841,12 +841,12 @@ svg.leaflet-image-layer.leaflet-interactive path {
   }
   #fullMapTopBar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 2001;
-    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: calc(3px + env(safe-area-inset-top, 0px)) 8px 3px;
     background: rgba(8, 24, 17, 0.88);
   }
   #fullMapTopBar .title { color: white; font-weight: 700; font-size: 11px; line-height: 1.1; }
-  #fullMapTopBar .count { color: #cfe8da; font-size: 9.5px; margin-top: 0; }
+  #fullMapTopBar .count { color: #cfe8da; font-size: 9.5px; }
   #fullMapCloseBtn {
     background: white; color: var(--manhole-deep); border: none; border-radius: 50%;
     width: 24px; height: 24px; font-weight: 700; font-size: 12px; flex-shrink: 0;
@@ -1023,7 +1023,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <h1>Diagnostic Réseau d'Assainissement</h1>
   <p>Levé terrain — regards et conduites, export KML</p>
 </header>
-<div id="offlineBanner" style="display:none;background:#7c3aed;color:white;padding:6px 14px;align-items:center;gap:8px;font-size:12.5px;font-weight:600;z-index:9999;"><span>📡</span><span>Hors ligne — fond de carte visible si pré-téléchargé (Plan/OSM uniquement)</span></div>
+<div id="offlineBanner" style="display:none;background:#7c3aed;color:white;padding:5px 14px;align-items:center;gap:8px;font-size:12px;font-weight:600;"><span>&#x1F4E1; Hors ligne &mdash; Tuiles visibles si pr&eacute;-t&eacute;l&eacute;charg&eacute;es</span></div>
 
 <main>
 
@@ -1047,9 +1047,9 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </div>
     <input type="file" id="importKmlInput" accept=".kml" style="display:none" onchange="handleImportKmlFile(event)">
     <div class="status-msg" id="posStatus"></div>
-    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap||map)" style="margin-top:6px;">⬇️ Télécharger la zone visible (hors ligne)</button>
+    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap||map)" style="margin-top:6px;">&#x2B07;&#xFE0F; T&eacute;l&eacute;charger zone (Google + OSM)</button>
     <div id="cacheStatus" class="status-msg" style="margin-top:3px;"></div>
-    <div id="cacheInfo" style="font-size:11.5px;color:#2d6a4f;margin-top:2px;line-height:1.4;"></div>
+    <div id="cacheInfo" style="font-size:11.5px;color:#2d6a4f;margin-top:2px;"></div>
     <div class="status-msg" id="importStatus"></div>
   </div>
 
@@ -1239,235 +1239,78 @@ svg.leaflet-image-layer.leaflet-interactive path {
   let driveTokenExpiresAt = 0;
 
 
-  // ===========================================================================
-  // SYSTÈME DE CACHE HORS-LIGNE — IndexedDB
-  // Seules les tuiles OSM (CORS autorisé) sont mises en cache.
-  // Google/Esri se chargent normalement en ligne mais ne peuvent pas être cachés.
-  // ===========================================================================
-  const TILE_DB_NAME    = 'assainissement-tiles-v1';
-  const TILE_DB_VERSION = 1;
-  const TILE_STORE      = 'tiles';
-  let tileDB = null;
+  // ==========================================================================
+  // CACHE HORS-LIGNE via Service Worker (sw-tiles.js)
+  // Le SW intercepte TOUTES les tuiles : Google Hybrid, Esri, OSM.
+  // Les tuiles sont mises en cache automatiquement a la navigation,
+  // et explicitement via le bouton "Telecharger zone".
+  // ==========================================================================
+  let _precaching = false;
 
-  function openTileDB() {
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(TILE_DB_NAME, TILE_DB_VERSION);
-      req.onupgradeneeded = e => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(TILE_STORE))
-          db.createObjectStore(TILE_STORE, { keyPath: 'k' });
-      };
-      req.onsuccess = e => resolve(e.target.result);
-      req.onerror   = e => reject(e.target.error);
-    });
-  }
-  function dbGet(key) {
-    return new Promise(res => {
-      try {
-        const tx = tileDB.transaction(TILE_STORE, 'readonly');
-        const rq = tx.objectStore(TILE_STORE).get(key);
-        rq.onsuccess = e => res(e.target.result ? e.target.result.d : null);
-        rq.onerror   = () => res(null);
-      } catch(e){ res(null); }
-    });
-  }
-  function dbSet(key, data) {
-    if (!tileDB) return;
-    try {
-      const tx = tileDB.transaction(TILE_STORE, 'readwrite');
-      tx.objectStore(TILE_STORE).put({ k: key, d: data });
-    } catch(e){}
-  }
-  function dbCount() {
-    return new Promise(res => {
-      try {
-        const tx = tileDB.transaction(TILE_STORE, 'readonly');
-        const rq = tx.objectStore(TILE_STORE).count();
-        rq.onsuccess = e => res(e.target.result);
-        rq.onerror   = () => res(0);
-      } catch(e){ res(0); }
-    });
-  }
-
-  // Tuile de remplacement (pas de carte disponible offline)
-  // Simple fond clair sans texte agressif
-  const OFFLINE_TILE = (() => {
-    const c = document.createElement('canvas'); c.width = 256; c.height = 256;
-    const x = c.getContext('2d');
-    x.fillStyle = '#e8f0eb'; x.fillRect(0,0,256,256);
-    x.strokeStyle = '#c5d9cc'; x.lineWidth = 0.5;
-    for(let i=0;i<256;i+=32){ x.beginPath();x.moveTo(i,0);x.lineTo(i,256);x.stroke(); x.beginPath();x.moveTo(0,i);x.lineTo(256,i);x.stroke(); }
-    return c.toDataURL();
-  })();
-
-  // ---------------------------------------------------------------------------
-  // OfflineTileLayer — UNIQUEMENT pour OSM (CORS autorisé = mise en cache OK)
-  // NE PAS utiliser pour Google/Esri (pas de CORS → crossOrigin casserait le chargement)
-  // ---------------------------------------------------------------------------
-  const OfflineTileLayer = L.TileLayer.extend({
-
-    // Clé IndexedDB pour des coordonnées z/x/y données
-    _cacheKey(x, y, z) {
-      return `osm_${z}_${x}_${y}`;
-    },
-
-    // Cherche une tuile parente dans le cache et recadre le quadrant correspondant.
-    // Remonte jusqu'à 6 niveaux de zoom pour trouver quelque chose.
-    async _fromParent(x, y, z, lvl=0) {
-      if (!tileDB || z <= 0 || lvl >= 6) return null;
-      const pz = z-1, px = x>>1, py = y>>1;
-      const parentData = await dbGet(this._cacheKey(px, py, pz));
-      const source = parentData || await this._fromParent(px, py, pz, lvl+1);
-      if (!source) return null;
-      return new Promise(res => {
-        const img = new Image();
-        img.onload = () => {
-          const cv = document.createElement('canvas'); cv.width=256; cv.height=256;
-          const cx = cv.getContext('2d');
-          // Chaque tuile parente couvre 4 enfants ; on extrait le bon quadrant
-          const qx = (x & 1)*128, qy = (y & 1)*128;
-          cx.drawImage(img, qx, qy, 128, 128, 0, 0, 256, 256);
-          res(cv.toDataURL('image/jpeg', 0.82));
-        };
-        img.onerror = () => res(null);
-        img.src = source;
-      });
-    },
-
-    createTile(coords, done) {
-      const img = document.createElement('img'); img.alt = '';
-      const {x, y, z} = coords;
-      const url = this.getTileUrl(coords);
-      const key = this._cacheKey(x, y, z);
-      const layer = this;
-
-      const show = d => { img.src = d || OFFLINE_TILE; done(null, img); };
-
-      const fromCacheOrParent = async () => {
-        const cached = await dbGet(key);
-        if (cached) { show(cached); return; }
-        const upscaled = await layer._fromParent(x, y, z);
-        show(upscaled);   // null → OFFLINE_TILE
-      };
-
-      const loadFromNet = () => {
-        img.crossOrigin = 'anonymous';   // OSM autorise le CORS — safe
-        img.onload = () => {
-          // Mettre en cache via canvas (fonctionne car OSM envoie les bons headers)
-          try {
-            const cv = document.createElement('canvas'); cv.width=256; cv.height=256;
-            cv.getContext('2d').drawImage(img,0,0);
-            dbSet(key, cv.toDataURL('image/jpeg', 0.85));
-          } catch(e){}
-          done(null, img);
-        };
-        img.onerror = () => fromCacheOrParent();   // réseau KO → cache → parent → placeholder
-        img.src = url;
-      };
-
-      if (!tileDB) { loadFromNet(); return img; }
-
-      // Cache hit → affichage immédiat sans réseau
-      dbGet(key).then(cached => {
-        if (cached) { img.src = cached; done(null, img); }
-        else if (!navigator.onLine) fromCacheOrParent();
-        else loadFromNet();
-      });
-      return img;
-    }
-  });
-
-  function offlineTileLayer(url, opts) { return new OfflineTileLayer(url, opts); }
-
-  // Ouvrir la base IndexedDB au démarrage
-  openTileDB()
-    .then(db => { tileDB = db; return dbCount(); })
-    .then(n  => updateCacheInfo(n))
-    .catch(e => console.warn('IndexedDB indisponible', e));
-
-  // ---------------------------------------------------------------------------
-  // Pré-téléchargement des tuiles OSM de la zone visible
-  // Zoom 5 → zoom actuel + 4 (max 19) pour couvrir navigation + terrain
-  // ---------------------------------------------------------------------------
-  let _caching = false;
-  async function preCacheTiles(targetMap) {
-    if (_caching) return;
-    if (!navigator.onLine) { alert('Connectez-vous au réseau pour télécharger les tuiles.'); return; }
-    if (!tileDB)           { alert('Stockage IndexedDB non disponible sur cet appareil.'); return; }
-
-    _caching = true;
-    const btn = document.getElementById('cacheBtn');
-    const statusEl = document.getElementById('cacheStatus');
-    if (btn) btn.disabled = true;
-
-    const bounds  = targetMap.getBounds();
-    const curZoom = Math.floor(targetMap.getZoom());
-    const zMin = 5, zMax = Math.min(curZoom + 4, 19);
-
-    const ll2tile = (lat, lng, z) => {
-      const n = 1 << z;
-      return {
-        x: Math.floor((lng + 180) / 360 * n),
-        y: Math.floor((1 - Math.log(Math.tan(lat * Math.PI/180) + 1/Math.cos(lat * Math.PI/180)) / Math.PI) / 2 * n)
-      };
-    };
-
-    const tiles = [];
-    for (let z = zMin; z <= zMax; z++) {
-      const a = ll2tile(bounds.getSouth(), bounds.getWest(), z);
-      const b = ll2tile(bounds.getNorth(), bounds.getEast(), z);
-      for (let x = Math.min(a.x,b.x); x <= Math.max(a.x,b.x); x++)
-        for (let y = Math.min(a.y,b.y); y <= Math.max(a.y,b.y); y++)
-          tiles.push({x, y, z});
-    }
-
-    if (tiles.length > 4000) {
-      const ok = confirm(`${tiles.length} tuiles à télécharger (~${Math.round(tiles.length*15/1024)} MB). Dézoomez pour réduire la zone. Continuer ?`);
-      if (!ok) { _caching=false; if(btn) btn.disabled=false; return; }
-    }
-
-    const subs = ['a','b','c'];
-    let done=0, skipped=0, errors=0;
-    const OSM_TPL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-
-    for (const t of tiles) {
-      const key = `osm_${t.z}_${t.x}_${t.y}`;
-      if (await dbGet(key)) { skipped++; done++; continue; }
-      const sub = subs[(t.x + t.y) % 3];
-      const url = OSM_TPL.replace('{s}',sub).replace('{z}',t.z).replace('{x}',t.x).replace('{y}',t.y);
-      try {
-        const resp = await fetch(url, { mode:'cors' });
-        if (!resp.ok) throw 0;
-        const blob = await resp.blob();
-        const dataUrl = await new Promise((r,j)=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.onerror=j; fr.readAsDataURL(blob); });
-        dbSet(key, dataUrl);
-        done++;
-      } catch(e){ errors++; }
-      if (statusEl && (done+errors) % 25 === 0)
-        statusEl.textContent = `\u2b07\ufe0f ${done+errors}/${tiles.length} tuiles\u2026`;
-    }
-
-    _caching = false;
-    if (btn) btn.disabled = false;
-    const total = await dbCount();
-    updateCacheInfo(total);
-    if (statusEl)
-      statusEl.textContent = errors===0
-        ? `\u2705 ${done} tuiles OSM sauvegard\u00e9es (${skipped} d\u00e9j\u00e0 en cache). Zone disponible hors ligne !`
-        : `\u26a0\ufe0f ${done} OK, ${errors} erreurs. V\u00e9rifiez votre connexion.`;
-  }
-
-  function updateCacheInfo(n) {
-    const el = document.getElementById('cacheInfo');
+  function _updateCacheInfo(count) {
+    var el = document.getElementById('cacheInfo');
     if (!el) return;
-    el.innerHTML = n > 0
-      ? `\ud83d\udcbe <b>${n} tuiles OSM</b> en cache (~${(n*15/1024).toFixed(1)} MB) \u2014 fond Plan disponible hors ligne`
-      : '\ud83d\udcbe Aucune tuile en cache \u2014 appuyez sur le bouton ci-dessus quand vous avez du r\u00e9seau.';
+    var mb = (count * 20 / 1024).toFixed(1);
+    el.innerHTML = count > 0
+      ? '<b>' + count + ' tuiles</b> en cache (~' + mb + '&nbsp;MB) &mdash; Google + OSM hors ligne'
+      : 'Aucune tuile en cache &mdash; appuyez sur le bouton ci-dessus avec du r&eacute;seau.';
   }
 
-  // Bannière hors-ligne
+  function _ll2xy(lat, lng, z) {
+    var n = 1 << z;
+    return {
+      x: Math.floor((lng + 180) / 360 * n),
+      y: Math.floor((1 - Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*n)
+    };
+  }
+
+  function _buildTileUrls(targetMap) {
+    var bounds  = targetMap.getBounds();
+    var curZoom = Math.floor(targetMap.getZoom());
+    var zMin = 5, zMax = Math.min(curZoom + 3, 20);
+    var urls = [];
+    var gSubs   = ['mt0','mt1','mt2','mt3'];
+    var osmSubs = ['a','b','c'];
+    for (var z = zMin; z <= zMax; z++) {
+      var sw2 = _ll2xy(bounds.getSouth(), bounds.getWest(), z);
+      var ne2 = _ll2xy(bounds.getNorth(), bounds.getEast(), z);
+      for (var x = Math.min(sw2.x,ne2.x); x <= Math.max(sw2.x,ne2.x); x++) {
+        for (var y2 = Math.min(sw2.y,ne2.y); y2 <= Math.max(sw2.y,ne2.y); y2++) {
+          var gs = gSubs[(x+y2)%4];
+          urls.push('https://' + gs + '.google.com/vt/lyrs=y&x='+x+'&y='+y2+'&z='+z);
+          var os = osmSubs[(x+y2)%3];
+          urls.push('https://'+os+'.tile.openstreetmap.org/'+z+'/'+x+'/'+y2+'.png');
+        }
+      }
+    }
+    return urls;
+  }
+
+  function preCacheTiles(targetMap) {
+    if (_precaching) return;
+    var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!sw) {
+      alert('Service Worker pas encore actif. Attendez 10 secondes et rechargez la page, puis r\u00e9essayez.');
+      return;
+    }
+    if (!navigator.onLine) {
+      alert('Connectez-vous au r\u00e9seau pour t\u00e9l\u00e9charger les tuiles.');
+      return;
+    }
+    var urls = _buildTileUrls(targetMap);
+    if (urls.length > 8000) {
+      if (!confirm(urls.length + ' tuiles (~' + Math.round(urls.length*20/1024) + ' MB). D\u00e9zoomez pour r\u00e9duire. Continuer ?')) return;
+    }
+    _precaching = true;
+    var btn = document.getElementById('cacheBtn');
+    var st  = document.getElementById('cacheStatus');
+    if (btn) btn.disabled = true;
+    if (st)  st.textContent = 'Envoi de ' + urls.length + ' URLs au Service Worker...';
+    sw.postMessage({ type: 'PRECACHE', urls: urls });
+  }
+
   function updateOfflineBanner() {
-    const b = document.getElementById('offlineBanner');
+    var b = document.getElementById('offlineBanner');
     if (b) b.style.display = navigator.onLine ? 'none' : 'flex';
   }
   window.addEventListener('online',  updateOfflineBanner);
@@ -1490,7 +1333,42 @@ svg.leaflet-image-layer.leaflet-interactive path {
   // juste parce que le fichier a changé sur le serveur, il faut explicitement le
   // désinscrire. On enregistre ensuite sw-v2.js (nom différent de sw.js) pour que
   // le navigateur le traite sans ambiguïté comme un nouveau Service Worker.
-  // Service Worker désactivé (version autonome hors-ligne)
+  // Service Worker : cache de tuiles satellite (Google, Esri, OSM)
+  let _swReady = false;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw-tiles.js')
+      .then(reg => {
+        _swReady = true;
+        const activate = () => {
+          if (navigator.serviceWorker.controller)
+            navigator.serviceWorker.controller.postMessage({ type: 'COUNT' });
+        };
+        activate();
+        navigator.serviceWorker.addEventListener('controllerchange', activate);
+      })
+      .catch(e => console.warn('[SW] non enregistré', e));
+
+    navigator.serviceWorker.addEventListener('message', e => {
+      const d = e.data;
+      const stEl = document.getElementById('cacheStatus');
+      const inEl = document.getElementById('cacheInfo');
+      if (d.type === 'PROGRESS' && stEl)
+        stEl.textContent = '\u2b07\ufe0f ' + d.done + ' / ' + d.total + ' tuiles...';
+      if (d.type === 'DONE') {
+        if (stEl) stEl.textContent = '\u2705 ' + d.done + ' tuiles OK (' + d.cached + ' au total)';
+        _updateCacheInfo(d.cached);
+        _precaching = false;
+        const btn = document.getElementById('cacheBtn');
+        if (btn) btn.disabled = false;
+      }
+      if (d.type === 'COUNT') _updateCacheInfo(d.count);
+      if (d.type === 'CLEARED') {
+        _updateCacheInfo(0);
+        const stEl2 = document.getElementById('cacheStatus');
+        if (stEl2) stEl2.textContent = '\ud83d\uddd1\ufe0f Cache vidé.';
+      }
+    });
+  }
 
   function addBaseLayers(targetMap) {
     // Fond satellite Google — imagerie généralement plus récente et plus détaillée
@@ -1528,8 +1406,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
     // Fond plan (rues), mis à jour en continu par la communauté OpenStreetMap.
     // Couverture mondiale fiable même là où l'imagerie satellite haute résolution manque.
-    // OSM : seule couche qui supporte le CORS et peut donc être mise en cache hors-ligne
-    const planLayer = offlineTileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    const planLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors'
     });
