@@ -1047,7 +1047,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </div>
     <input type="file" id="importKmlInput" accept=".kml" style="display:none" onchange="handleImportKmlFile(event)">
     <div class="status-msg" id="posStatus"></div>
-    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap||map)" style="margin-top:6px;">&#x2B07;&#xFE0F; T&eacute;l&eacute;charger zone (Google + OSM)</button>
+    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap||map)" style="margin-top:6px;">⬇️ Télécharger zone (Google + OSM)</button>
     <div id="cacheStatus" class="status-msg" style="margin-top:3px;"></div>
     <div id="cacheInfo" style="font-size:11.5px;color:#2d6a4f;margin-top:2px;"></div>
     <div class="status-msg" id="importStatus"></div>
@@ -1241,74 +1241,157 @@ svg.leaflet-image-layer.leaflet-interactive path {
 
   // ==========================================================================
   // CACHE HORS-LIGNE via Service Worker (sw-tiles.js)
-  // Le SW intercepte TOUTES les tuiles : Google Hybrid, Esri, OSM.
-  // Les tuiles sont mises en cache automatiquement a la navigation,
-  // et explicitement via le bouton "Telecharger zone".
+  // Telechargement parallele (8 simultanes), progress en temps reel,
+  // limite de tuiles raisonnable, bouton annuler.
   // ==========================================================================
   let _precaching = false;
+  let _cancelRequested = false;
 
+  // Mettre a jour l'affichage du nombre de tuiles en cache
   function _updateCacheInfo(count) {
     var el = document.getElementById('cacheInfo');
     if (!el) return;
-    var mb = (count * 20 / 1024).toFixed(1);
-    el.innerHTML = count > 0
-      ? '<b>' + count + ' tuiles</b> en cache (~' + mb + '&nbsp;MB) &mdash; Google + OSM hors ligne'
-      : 'Aucune tuile en cache &mdash; appuyez sur le bouton ci-dessus avec du r&eacute;seau.';
+    var mb = (count * 18 / 1024).toFixed(1);
+    if (count > 0) {
+      el.innerHTML = '<b>' + count + ' tuiles</b> en cache (~' + mb + ' MB) — Google Hybrid + OSM disponibles hors ligne';
+    } else {
+      el.innerHTML = 'Aucune tuile en cache — appuyez sur le bouton ci-dessous avec du réseau.';
+    }
   }
 
+  // Convertir lat/lng en coordonnees tuile x/y
   function _ll2xy(lat, lng, z) {
     var n = 1 << z;
+    var latR = lat * Math.PI / 180;
     return {
       x: Math.floor((lng + 180) / 360 * n),
-      y: Math.floor((1 - Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*n)
+      y: Math.floor((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * n)
     };
   }
 
+  // Construire la liste des URLs de tuiles pour la zone visible
+  // Zoom : niveau actuel -1 jusqu'a +3 (max 19) pour couvrir le terrain
   function _buildTileUrls(targetMap) {
     var bounds  = targetMap.getBounds();
     var curZoom = Math.floor(targetMap.getZoom());
-    var zMin = 5, zMax = Math.min(curZoom + 3, 20);
-    var urls = [];
+    var zMin = Math.max(curZoom - 1, 8);   // pas en dessous de zoom 8
+    var zMax = Math.min(curZoom + 3, 19);
+
     var gSubs   = ['mt0','mt1','mt2','mt3'];
     var osmSubs = ['a','b','c'];
+    var seen = {};
+    var urls = [];
+
     for (var z = zMin; z <= zMax; z++) {
       var sw2 = _ll2xy(bounds.getSouth(), bounds.getWest(), z);
       var ne2 = _ll2xy(bounds.getNorth(), bounds.getEast(), z);
-      for (var x = Math.min(sw2.x,ne2.x); x <= Math.max(sw2.x,ne2.x); x++) {
-        for (var y2 = Math.min(sw2.y,ne2.y); y2 <= Math.max(sw2.y,ne2.y); y2++) {
-          var gs = gSubs[(x+y2)%4];
-          urls.push('https://' + gs + '.google.com/vt/lyrs=y&x='+x+'&y='+y2+'&z='+z);
-          var os = osmSubs[(x+y2)%3];
-          urls.push('https://'+os+'.tile.openstreetmap.org/'+z+'/'+x+'/'+y2+'.png');
+      var x0 = Math.min(sw2.x, ne2.x), x1 = Math.max(sw2.x, ne2.x);
+      var y0 = Math.min(sw2.y, ne2.y), y1 = Math.max(sw2.y, ne2.y);
+      for (var x = x0; x <= x1; x++) {
+        for (var y = y0; y <= y1; y++) {
+          // Google Hybrid
+          var gu = 'https://' + gSubs[(x+y)%4] + '.google.com/vt/lyrs=y&x='+x+'&y='+y+'&z='+z;
+          if (!seen[gu]) { seen[gu]=1; urls.push(gu); }
+          // OSM Plan
+          var ou = 'https://' + osmSubs[(x+y)%3] + '.tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';
+          if (!seen[ou]) { seen[ou]=1; urls.push(ou); }
         }
       }
     }
     return urls;
   }
 
+  // Barre de progression visuelle dans le bouton
+  function _setProgress(pct, label) {
+    var btn = document.getElementById('cacheBtn');
+    var st  = document.getElementById('cacheStatus');
+    if (st) st.textContent = label;
+    if (btn) {
+      btn.style.background = 'linear-gradient(to right, #2d6a4f ' + pct + '%, #e0e0e0 ' + pct + '%)';
+      btn.style.color = pct > 40 ? 'white' : '#333';
+    }
+  }
+
+  function _resetBtn() {
+    var btn = document.getElementById('cacheBtn');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '⬇️ Télécharger zone (Google + OSM)';
+      btn.style.background = '';
+      btn.style.color = '';
+    }
+  }
+
+  // Lancer le pre-telechargement
   function preCacheTiles(targetMap) {
-    if (_precaching) return;
+    if (_precaching) {
+      // Bouton devient "Annuler" pendant le telechargement
+      _cancelRequested = true;
+      var st = document.getElementById('cacheStatus');
+      if (st) st.textContent = 'Annulation…';
+      return;
+    }
+
     var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
     if (!sw) {
-      alert('Service Worker pas encore actif. Attendez 10 secondes et rechargez la page, puis r\u00e9essayez.');
+      alert('Service Worker pas encore actif.\nAttendez 10 secondes, rechargez la page, puis réessayez.');
       return;
     }
     if (!navigator.onLine) {
-      alert('Connectez-vous au r\u00e9seau pour t\u00e9l\u00e9charger les tuiles.');
+      alert('Pas de réseau. Connectez-vous puis réessayez.');
       return;
     }
+
     var urls = _buildTileUrls(targetMap);
-    if (urls.length > 8000) {
-      if (!confirm(urls.length + ' tuiles (~' + Math.round(urls.length*20/1024) + ' MB). D\u00e9zoomez pour r\u00e9duire. Continuer ?')) return;
+    var tileCount = urls.length;
+    var estMB = Math.round(tileCount * 18 / 1024);
+
+    // Avertissement si trop de tuiles
+    if (tileCount > 2000) {
+      if (!confirm(tileCount + ' tuiles (˜' + estMB + ' MB).
+Dézoomez la carte pour réduire la zone.\nContinuer quand même ?')) return;
     }
+
     _precaching = true;
+    _cancelRequested = false;
+
     var btn = document.getElementById('cacheBtn');
-    var st  = document.getElementById('cacheStatus');
-    if (btn) btn.disabled = true;
-    if (st)  st.textContent = 'Envoi de ' + urls.length + ' URLs au Service Worker...';
+    if (btn) {
+      btn.textContent = '❌ Annuler le téléchargement';
+      btn.disabled = false;  // reste cliquable pour annuler
+    }
+    _setProgress(0, '⏳ Préparation de ' + tileCount + ' tuiles…');
+
+    // Ecouter les messages du SW
+    var _onMsg = function(e) {
+      var d = e.data;
+      if (d.type === 'PROGRESS') {
+        var pct = Math.round(d.done / d.total * 100);
+        var eta = '';
+        _setProgress(pct,
+          '⬇️ ' + d.done + ' / ' + d.total +
+          ' (' + pct + '%) — ' + d.errors + ' erreurs'
+        );
+      }
+      if (d.type === 'DONE') {
+        navigator.serviceWorker.removeEventListener('message', _onMsg);
+        _precaching = false;
+        _cancelRequested = false;
+        _resetBtn();
+        _setProgress(100, '✅ ' + d.done + ' tuiles téléchargées' +
+          (d.errors > 0 ? ' (' + d.errors + ' échecs)' : '') +
+          ' — ' + d.cached + ' au total dans le cache');
+        _updateCacheInfo(d.cached);
+      }
+      if (d.type === 'COUNT') _updateCacheInfo(d.count);
+      if (d.type === 'CLEARED') { _updateCacheInfo(0); _resetBtn(); }
+    };
+    navigator.serviceWorker.addEventListener('message', _onMsg);
+
     sw.postMessage({ type: 'PRECACHE', urls: urls });
   }
 
+  // Banniere hors-ligne
   function updateOfflineBanner() {
     var b = document.getElementById('offlineBanner');
     if (b) b.style.display = navigator.onLine ? 'none' : 'flex';
