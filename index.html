@@ -1023,7 +1023,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <h1>Diagnostic Réseau d'Assainissement</h1>
   <p>Levé terrain — regards et conduites, export KML</p>
 </header>
-<div id="offlineBanner" style="display:none;background:#7c3aed;color:white;padding:5px 14px;align-items:center;gap:8px;font-size:12px;font-weight:600;"><span>&#x1F4E1; Hors ligne &mdash; Tuiles visibles si pr&eacute;-t&eacute;l&eacute;charg&eacute;es</span></div>
+<div id="offlineBanner" style="display:none;background:#7c3aed;color:white;padding:5px 14px;align-items:center;gap:8px;font-size:12px;font-weight:600;"><span>Hors ligne &mdash; tuiles visibles si pr&eacute;-t&eacute;l&eacute;charg&eacute;es</span></div>
 
 <main>
 
@@ -1047,7 +1047,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
     </div>
     <input type="file" id="importKmlInput" accept=".kml" style="display:none" onchange="handleImportKmlFile(event)">
     <div class="status-msg" id="posStatus"></div>
-    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap||map)" style="margin-top:6px;">⬇️ Télécharger zone (Google + OSM)</button>
+    <button class="btn-outline" id="cacheBtn" onclick="preCacheTiles(fullMap||map)" style="margin-top:6px;">Telecharger zone hors-ligne (Google + OSM)</button>
     <div id="cacheStatus" class="status-msg" style="margin-top:3px;"></div>
     <div id="cacheInfo" style="font-size:11.5px;color:#2d6a4f;margin-top:2px;"></div>
     <div class="status-msg" id="importStatus"></div>
@@ -1239,61 +1239,46 @@ svg.leaflet-image-layer.leaflet-interactive path {
   let driveTokenExpiresAt = 0;
 
 
-  // ==========================================================================
-  // CACHE HORS-LIGNE via Service Worker (sw-tiles.js)
-  // Telechargement parallele (8 simultanes), progress en temps reel,
-  // limite de tuiles raisonnable, bouton annuler.
-  // ==========================================================================
-  let _precaching = false;
-  let _cancelRequested = false;
+  /* ================================================================
+     CACHE HORS-LIGNE  (Service Worker sw-tiles.js)
+     - Le SW intercepte automatiquement toutes les tuiles au chargement
+     - Le bouton telecharge explicitement la zone visible
+     - 8 telechargements paralleles, timeout 7s par tuile
+  ================================================================ */
+  var _precaching = false;
 
-  // Mettre a jour l'affichage du nombre de tuiles en cache
-  function _updateCacheInfo(count) {
+  function _updateCacheInfo(n) {
     var el = document.getElementById('cacheInfo');
     if (!el) return;
-    var mb = (count * 18 / 1024).toFixed(1);
-    if (count > 0) {
-      el.innerHTML = '<b>' + count + ' tuiles</b> en cache (~' + mb + ' MB) — Google Hybrid + OSM disponibles hors ligne';
-    } else {
-      el.innerHTML = 'Aucune tuile en cache — appuyez sur le bouton ci-dessous avec du réseau.';
-    }
+    var mb = (n * 18 / 1024).toFixed(1);
+    el.innerHTML = n > 0
+      ? '<b>' + n + ' tuiles</b> en cache (~' + mb + ' MB) \u2014 Google + OSM hors ligne'
+      : 'Aucune tuile \u2014 appuyez sur le bouton ci-dessus avec du r\u00e9seau.';
   }
 
-  // Convertir lat/lng en coordonnees tuile x/y
   function _ll2xy(lat, lng, z) {
     var n = 1 << z;
-    var latR = lat * Math.PI / 180;
+    var lr = lat * Math.PI / 180;
     return {
       x: Math.floor((lng + 180) / 360 * n),
-      y: Math.floor((1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * n)
+      y: Math.floor((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n)
     };
   }
 
-  // Construire la liste des URLs de tuiles pour la zone visible
-  // Zoom : niveau actuel -1 jusqu'a +3 (max 19) pour couvrir le terrain
-  function _buildTileUrls(targetMap) {
-    var bounds  = targetMap.getBounds();
-    var curZoom = Math.floor(targetMap.getZoom());
-    var zMin = Math.max(curZoom - 1, 8);   // pas en dessous de zoom 8
-    var zMax = Math.min(curZoom + 3, 19);
-
-    var gSubs   = ['mt0','mt1','mt2','mt3'];
-    var osmSubs = ['a','b','c'];
-    var seen = {};
-    var urls = [];
-
+  function _buildUrls(m) {
+    var b = m.getBounds();
+    var cz = Math.floor(m.getZoom());
+    var zMin = Math.max(cz - 1, 8), zMax = Math.min(cz + 3, 19);
+    var gs = ['mt0','mt1','mt2','mt3'], os = ['a','b','c'];
+    var seen = {}, urls = [];
     for (var z = zMin; z <= zMax; z++) {
-      var sw2 = _ll2xy(bounds.getSouth(), bounds.getWest(), z);
-      var ne2 = _ll2xy(bounds.getNorth(), bounds.getEast(), z);
-      var x0 = Math.min(sw2.x, ne2.x), x1 = Math.max(sw2.x, ne2.x);
-      var y0 = Math.min(sw2.y, ne2.y), y1 = Math.max(sw2.y, ne2.y);
-      for (var x = x0; x <= x1; x++) {
-        for (var y = y0; y <= y1; y++) {
-          // Google Hybrid
-          var gu = 'https://' + gSubs[(x+y)%4] + '.google.com/vt/lyrs=y&x='+x+'&y='+y+'&z='+z;
+      var sw2 = _ll2xy(b.getSouth(), b.getWest(), z);
+      var ne2 = _ll2xy(b.getNorth(), b.getEast(), z);
+      for (var tx = Math.min(sw2.x,ne2.x); tx <= Math.max(sw2.x,ne2.x); tx++) {
+        for (var ty = Math.min(sw2.y,ne2.y); ty <= Math.max(sw2.y,ne2.y); ty++) {
+          var gu = 'https://' + gs[(tx+ty)%4] + '.google.com/vt/lyrs=y&x='+tx+'&y='+ty+'&z='+z;
+          var ou = 'https://' + os[(tx+ty)%3] + '.tile.openstreetmap.org/'+z+'/'+tx+'/'+ty+'.png';
           if (!seen[gu]) { seen[gu]=1; urls.push(gu); }
-          // OSM Plan
-          var ou = 'https://' + osmSubs[(x+y)%3] + '.tile.openstreetmap.org/'+z+'/'+x+'/'+y+'.png';
           if (!seen[ou]) { seen[ou]=1; urls.push(ou); }
         }
       }
@@ -1301,97 +1286,64 @@ svg.leaflet-image-layer.leaflet-interactive path {
     return urls;
   }
 
-  // Barre de progression visuelle dans le bouton
-  function _setProgress(pct, label) {
-    var btn = document.getElementById('cacheBtn');
-    var st  = document.getElementById('cacheStatus');
+  function _setUI(label, pct) {
+    var st = document.getElementById('cacheStatus');
+    var bt = document.getElementById('cacheBtn');
     if (st) st.textContent = label;
-    if (btn) {
-      btn.style.background = 'linear-gradient(to right, #2d6a4f ' + pct + '%, #e0e0e0 ' + pct + '%)';
-      btn.style.color = pct > 40 ? 'white' : '#333';
+    if (bt && pct >= 0) {
+      bt.style.background = 'linear-gradient(to right,#2d6a4f ' + pct + '%,#ccc ' + pct + '%)';
+      bt.style.color = pct > 45 ? '#fff' : '#333';
     }
   }
 
-  function _resetBtn() {
-    var btn = document.getElementById('cacheBtn');
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '⬇️ Télécharger zone (Google + OSM)';
-      btn.style.background = '';
-      btn.style.color = '';
+  function _resetUI() {
+    var bt = document.getElementById('cacheBtn');
+    if (bt) {
+      bt.disabled = false;
+      bt.textContent = 'Telecharger zone hors-ligne (Google + OSM)';
+      bt.style.background = '';
+      bt.style.color = '';
     }
+    _precaching = false;
   }
 
-  // Lancer le pre-telechargement
   function preCacheTiles(targetMap) {
-    if (_precaching) {
-      // Bouton devient "Annuler" pendant le telechargement
-      _cancelRequested = true;
-      var st = document.getElementById('cacheStatus');
-      if (st) st.textContent = 'Annulation…';
-      return;
-    }
-
+    if (_precaching) return;
     var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
     if (!sw) {
-      alert('Service Worker pas encore actif.\nAttendez 10 secondes, rechargez la page, puis réessayez.');
+      alert('Service Worker pas encore actif. Attendez 10 secondes, rechargez la page et reessayez.');
       return;
     }
     if (!navigator.onLine) {
-      alert('Pas de réseau. Connectez-vous puis réessayez.');
+      alert('Pas de reseau. Connectez-vous puis reessayez.');
       return;
     }
-
-    var urls = _buildTileUrls(targetMap);
-    var tileCount = urls.length;
-    var estMB = Math.round(tileCount * 18 / 1024);
-
-    // Avertissement si trop de tuiles
-    if (tileCount > 2000) {
-      if (!confirm(tileCount + ' tuiles (˜' + estMB + ' MB).
-Dézoomez la carte pour réduire la zone.\nContinuer quand même ?')) return;
-    }
+    var urls = _buildUrls(targetMap);
+    var nb = urls.length;
+    if (nb > 2000 && !confirm(nb + ' tuiles a telecharger. Dezoomez pour reduire la zone. Continuer ?')) return;
 
     _precaching = true;
-    _cancelRequested = false;
+    var bt = document.getElementById('cacheBtn');
+    if (bt) bt.disabled = true;
+    _setUI('Preparation de ' + nb + ' tuiles...', 0);
 
-    var btn = document.getElementById('cacheBtn');
-    if (btn) {
-      btn.textContent = '❌ Annuler le téléchargement';
-      btn.disabled = false;  // reste cliquable pour annuler
-    }
-    _setProgress(0, '⏳ Préparation de ' + tileCount + ' tuiles…');
-
-    // Ecouter les messages du SW
-    var _onMsg = function(e) {
+    var handler = function(e) {
       var d = e.data;
       if (d.type === 'PROGRESS') {
         var pct = Math.round(d.done / d.total * 100);
-        var eta = '';
-        _setProgress(pct,
-          '⬇️ ' + d.done + ' / ' + d.total +
-          ' (' + pct + '%) — ' + d.errors + ' erreurs'
-        );
+        _setUI(d.done + ' / ' + d.total + ' (' + pct + '%) \u2014 ' + d.errors + ' erreurs', pct);
       }
       if (d.type === 'DONE') {
-        navigator.serviceWorker.removeEventListener('message', _onMsg);
-        _precaching = false;
-        _cancelRequested = false;
-        _resetBtn();
-        _setProgress(100, '✅ ' + d.done + ' tuiles téléchargées' +
-          (d.errors > 0 ? ' (' + d.errors + ' échecs)' : '') +
-          ' — ' + d.cached + ' au total dans le cache');
+        navigator.serviceWorker.removeEventListener('message', handler);
+        _setUI('OK : ' + d.done + ' tuiles OK' + (d.errors ? ', ' + d.errors + ' echecs' : '') + ' \u2014 total cache : ' + d.cached, 100);
         _updateCacheInfo(d.cached);
+        _resetUI();
       }
-      if (d.type === 'COUNT') _updateCacheInfo(d.count);
-      if (d.type === 'CLEARED') { _updateCacheInfo(0); _resetBtn(); }
     };
-    navigator.serviceWorker.addEventListener('message', _onMsg);
-
+    navigator.serviceWorker.addEventListener('message', handler);
     sw.postMessage({ type: 'PRECACHE', urls: urls });
   }
 
-  // Banniere hors-ligne
   function updateOfflineBanner() {
     var b = document.getElementById('offlineBanner');
     if (b) b.style.display = navigator.onLine ? 'none' : 'flex';
@@ -1416,40 +1368,23 @@ Dézoomez la carte pour réduire la zone.\nContinuer quand même ?')) return;
   // juste parce que le fichier a changé sur le serveur, il faut explicitement le
   // désinscrire. On enregistre ensuite sw-v2.js (nom différent de sw.js) pour que
   // le navigateur le traite sans ambiguïté comme un nouveau Service Worker.
-  // Service Worker : cache de tuiles satellite (Google, Esri, OSM)
-  let _swReady = false;
+  // Service Worker — cache tuiles satellite (Google Hybrid, OSM)
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw-tiles.js')
-      .then(reg => {
-        _swReady = true;
-        const activate = () => {
+      .then(function(reg) {
+        var activate = function() {
           if (navigator.serviceWorker.controller)
             navigator.serviceWorker.controller.postMessage({ type: 'COUNT' });
         };
         activate();
         navigator.serviceWorker.addEventListener('controllerchange', activate);
       })
-      .catch(e => console.warn('[SW] non enregistré', e));
+      .catch(function(e) { console.warn('[SW] non enregistre', e); });
 
-    navigator.serviceWorker.addEventListener('message', e => {
-      const d = e.data;
-      const stEl = document.getElementById('cacheStatus');
-      const inEl = document.getElementById('cacheInfo');
-      if (d.type === 'PROGRESS' && stEl)
-        stEl.textContent = '\u2b07\ufe0f ' + d.done + ' / ' + d.total + ' tuiles...';
-      if (d.type === 'DONE') {
-        if (stEl) stEl.textContent = '\u2705 ' + d.done + ' tuiles OK (' + d.cached + ' au total)';
-        _updateCacheInfo(d.cached);
-        _precaching = false;
-        const btn = document.getElementById('cacheBtn');
-        if (btn) btn.disabled = false;
-      }
-      if (d.type === 'COUNT') _updateCacheInfo(d.count);
-      if (d.type === 'CLEARED') {
-        _updateCacheInfo(0);
-        const stEl2 = document.getElementById('cacheStatus');
-        if (stEl2) stEl2.textContent = '\ud83d\uddd1\ufe0f Cache vidé.';
-      }
+    navigator.serviceWorker.addEventListener('message', function(e) {
+      var d = e.data;
+      if (d.type === 'COUNT') { _updateCacheInfo(d.count); }
+      if (d.type === 'CLEARED') { _updateCacheInfo(0); }
     });
   }
 
