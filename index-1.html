@@ -1,0 +1,2970 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<title>Diagnostic Réseau d'Assainissement</title>
+
+<!-- PWA : permet d'installer cette page comme une app à part entière (icône sur
+     l'écran d'accueil, sans barre de navigateur), en utilisant directement le
+     moteur de rendu de Chrome/Brave — bien plus fluide que tout WebView intégré
+     dans une app générée par un convertisseur (WebIntoApp, Appilix, Median.co…). -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2d6a4f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Assainissement">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<style>
+  :root {
+    --ink: #182620;
+    --primary: #2d6a4f;       /* vert collecteur/conduite, convention réseaux EU */
+    --primary-deep: #1b4332;
+    --manhole: #c2790f;       /* ocre fonte, regard de visite */
+    --manhole-deep: #95590a;
+    --bg: #f2f6f3;
+    --card-bg: #ffffff;
+    --border: #d7e3dc;
+    --text-light: #5b6e64;
+    --danger: #b3261e;
+    --success: #1d7a4c;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    padding-bottom: 30px;
+  }
+  header {
+    background: linear-gradient(135deg, var(--primary), var(--primary-deep));
+    color: white;
+    padding: 18px 16px 14px;
+    border-bottom: 3px dashed rgba(255,255,255,0.35);
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0.2px; }
+  header p { margin: 4px 0 0; font-size: 12.5px; opacity: 0.88; }
+
+  main { padding: 14px; max-width: 720px; margin: 0 auto; }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card.locate { border-left-color: var(--manhole); }
+  .card.regards { border-left-color: var(--manhole); }
+  .card.conduites { border-left-color: var(--primary); }
+
+  .card h2 {
+    font-size: 14.5px;
+    margin: 0 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card.locate h2, .card.regards h2 { color: var(--manhole-deep); }
+  .card.conduites h2 { color: var(--primary-deep); }
+
+  .badge-count {
+    color: white;
+    font-size: 11px;
+    border-radius: 999px;
+    padding: 2px 8px;
+    margin-left: auto;
+  }
+  .card.regards .badge-count { background: var(--manhole); }
+  .card.conduites .badge-count { background: var(--primary); }
+
+  /* Bouton +/- pour replier/déplier la liste des regards ou des collecteurs,
+     comme un panneau "Layers" dans un logiciel GIS ou Google Earth : évite de
+     devoir faire défiler toute la liste pour atteindre le bouton d'export plus bas. */
+  .toggle-list-btn {
+    width: 26px; height: 26px; border-radius: 8px; border: none;
+    background: var(--manhole-deep); color: white; font-size: 16px; font-weight: 700;
+    line-height: 1; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .card.conduites .toggle-list-btn, #condToggleBtn { background: var(--primary-deep); }
+  #condSelectModeBtn.active-select { background: #c0392b; }
+  .collapsible-list { display: none; }
+  .collapsible-list.open { display: block; }
+
+  .hint { font-size: 12.5px; color: var(--text-light); margin: 0 0 10px; line-height: 1.5; }
+
+  label { display: block; font-size: 12.5px; color: var(--text-light); margin: 10px 0 4px; }
+  input, textarea, select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font-size: 16px;
+    font-family: inherit;
+    background: #fbfdfc;
+  }
+  textarea { resize: vertical; min-height: 46px; }
+
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  button {
+    border: none;
+    border-radius: 9px;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 12px;
+  }
+  button:active { opacity: 0.85; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-manhole { background: var(--manhole); color: white; }
+  .btn-outline { background: transparent; color: var(--primary); border: 1.5px solid var(--primary); }
+  .btn-outline-danger { background: transparent; color: var(--danger); border: 1.5px solid var(--danger); }
+  .btn-danger-text { background: transparent; color: var(--danger); border: none; width: auto; padding: 4px 6px; font-size: 16px; margin-top: 0; line-height: 1; }
+
+  .row-two { display: flex; gap: 10px; }
+  .row-two > div, .row-two > button { flex: 1; margin-top: 10px; }
+
+  #map { height: 320px; border-radius: 10px; margin-top: 6px; }
+  .legend { display:flex; gap:16px; font-size:12px; color:var(--text-light); margin-top:8px; }
+  .legend span { display:flex; align-items:center; }
+  .legend .pin-sample {
+    display:inline-block; width:14px; height:14px; border-radius:50% 50% 50% 0;
+    background: var(--manhole); border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    transform: rotate(-45deg); margin-right:8px;
+  }
+
+  /* Vue carte plein écran : affiche toutes les données enregistrées sans passer par
+     Google Earth (qui duplique les données à chaque import). */
+  .btn-fullmap {
+    background: var(--manhole-deep); color: white; border: none; border-radius: 10px;
+    padding: 12px 14px; font-size: 15px; font-weight: 600; width: 100%; margin-top: 10px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  #fullMapOverlay {
+    display: none; position: fixed; inset: 0; z-index: 2000; background: #0b1f17;
+  }
+  #fullMapOverlay.open { display: block; }
+  /* Force la mise en couche GPU (compositing) de la carte. Certains WebView Android
+     embarqués dans des apps (contrairement à Chrome lui-même) n'activent pas le GPU
+     Raster par défaut, ce qui rend tout le glissement (pan) — y compris les tuiles de
+     fond satellite — lent et saccadé. translateZ(0)/will-change forcent le navigateur
+     à composer cet élément sur sa propre couche GPU plutôt que de le redessiner au CPU
+     à chaque frame. */
+  #fullMapOverlay #fullMap {
+    position: absolute; inset: 0;
+    transform: translateZ(0);
+    will-change: transform;
+    backface-visibility: hidden;
+  }
+  #fullMapOverlay #fullMap .leaflet-tile,
+  #fullMapOverlay #fullMap .leaflet-marker-icon,
+  #fullMapOverlay #fullMap .leaflet-zoom-animated {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+  #fullMapTopBar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 2001;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px;
+    background: rgba(8, 24, 17, 0.92);
+  }
+  #fullMapTopBar .title { color: white; font-weight: 700; font-size: 12.5px; line-height: 1.2; }
+  #fullMapTopBar .count { color: #cfe8da; font-size: 10.5px; margin-top: 1px; }
+  #fullMapCloseBtn {
+    background: white; color: var(--manhole-deep); border: none; border-radius: 50%;
+    width: 30px; height: 30px; font-weight: 700; font-size: 14px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #fullMapFullscreenBtn {
+    background: rgba(255,255,255,0.18); color: white; border: none; border-radius: 50%;
+    width: 30px; height: 30px; font-weight: 700; font-size: 15px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; margin-left: auto;
+  }
+  /* Quand le mode plein écran natif est actif, le navigateur masque déjà sa barre
+     d'adresse et sa barre de navigation : on n'a alors plus besoin que de
+     env(safe-area-inset-top) tienne compte d'une encoche, ce padding reste donc
+     correct dans les deux cas (actif ou non). */
+
+  /* Bouton "Ma position" : petit bouton compact à côté de "Dessiner un collecteur",
+     plutôt qu'un gros bouton flottant séparé qui prenait trop de place. */
+  #myLocationBtn {
+    flex: 0 0 48px; height: 48px; border-radius: 10px; border: none;
+    background: white; color: var(--manhole-deep); font-size: 19px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #myLocationBtn.tracking { background: #1a73e8; color: white; }
+
+  /* Bouton boussole "Nord" : même gabarit que #myLocationBtn (48x48, à côté de lui).
+     Toucher = revient au nord ; glisser en cercle = fait pivoter la carte (voir
+     initNorthBtnDial). touch-action:none empêche le navigateur d'interpréter ce
+     glissement comme un geste de défilement de page, ce qui rendrait la rotation saccadée. */
+  #northBtn {
+    flex: 0 0 48px; height: 48px; border-radius: 10px; border: none;
+    background: white; display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  #northNeedle { }
+
+  /* Point bleu pulsant représentant la position GPS en direct, comme sur Google Maps/Earth */
+  .my-location-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #1a73e8; border: 2px solid white; box-shadow: 0 0 0 2px rgba(26,115,232,0.4);
+  }
+  .my-location-pulse {
+    position: absolute; top: 50%; left: 50%; width: 16px; height: 16px;
+    margin: -8px 0 0 -8px; border-radius: 50%; background: rgba(26,115,232,0.35);
+    animation: myLocationPulse 1.8s ease-out infinite;
+  }
+  @keyframes myLocationPulse {
+    0%   { transform: scale(1);   opacity: 0.7; }
+    100% { transform: scale(2.8); opacity: 0; }
+  }
+
+  #fullMapBottomBar {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 2001;
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: rgba(8, 24, 17, 0.94);
+    display: flex; flex-direction: column; align-items: stretch; gap: 5px;
+  }
+  .bottom-bar-row { display: flex; gap: 8px; align-items: stretch; }
+  .draw-mode-btn {
+    flex: 1; border: none; border-radius: 10px; padding: 11px 14px;
+    font-weight: 700; font-size: 14px; background: var(--manhole); color: white;
+  }
+  .draw-mode-btn.active { background: #c0392b; }
+  .draw-mode-hint { color: #cfe8da; font-size: 12px; text-align: center; min-height: 14px; }
+
+  /* Étiquette de nom sur la carte réduite (aperçu en haut de page, lecture seule) */
+  .map-label-regard {
+    background: rgba(11,31,23,0.85); color: white; font-weight: 700; font-size: 12px;
+    padding: 1px 6px; border-radius: 5px; white-space: nowrap; border: none !important;
+    box-shadow: none !important;
+  }
+  .map-label-regard::before { display: none; }
+
+  /* Icône combinée d'un collecteur : flèche de sens d'écoulement + étiquette de nom,
+     en un seul élément DOM (voir buildCollecteurIcon en JS). */
+  .cond-icon { background: transparent; border: none; }
+  .cond-icon-wrap { position: relative; width: 14px; height: 12px; }
+  .cond-icon-arrow {
+    width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent;
+    border-top: 12px solid; /* couleur définie inline (couleur du collecteur) */
+  }
+  .cond-icon-label {
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    background: rgba(45,106,79,0.92); color: white; font-weight: 700; font-size: 11.5px;
+    padding: 1px 6px; border-radius: 5px; white-space: nowrap;
+  }
+
+  /* Icône combinée d'un regard : point coloré + étiquette de nom, en un seul élément
+     DOM (voir buildRegardIcon en JS) au lieu de plusieurs calques séparés — bien plus
+     léger à repositionner pour Leaflet pendant le glissement (pan) de la carte. */
+  .regard-icon { background: transparent; border: none; }
+  .regard-icon-touch {
+    position: relative; width: 44px; height: 44px; display: flex;
+    align-items: center; justify-content: center;
+  }
+  .regard-icon-dot {
+    border-radius: 50%; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    flex-shrink: 0;
+  }
+  .regard-icon-label {
+    position: absolute; left: 26px; top: 50%; transform: translateY(-50%);
+    background: rgba(11,31,23,0.85); color: white; font-weight: 700; font-size: 12px;
+    padding: 1px 6px; border-radius: 5px; white-space: nowrap;
+  }
+
+  /* Fiches de saisie rapide (modals) */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 3000;
+    background: rgba(0,0,0,0.5); align-items: flex-end; justify-content: center;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal-sheet {
+    background: var(--card-bg, #ffffff); width: 100%; max-width: 480px;
+    border-radius: 16px 16px 0 0; padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.3);
+    /* max-height + overflow-y : quand le clavier virtuel Android réduit l'espace
+       visible réel (visualViewport), on recalcule cette valeur en JS (voir
+       adjustModalsForKeyboard ci-dessous) pour que la fiche tienne toujours dans
+       l'espace restant au-dessus du clavier, avec un défilement interne si besoin,
+       au lieu de déborder derrière le clavier comme avant. */
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal-sheet h3 { margin: 0 0 12px 0; color: var(--manhole-deep); }
+  .modal-actions { display: flex; gap: 10px; margin-top: 14px; }
+  .modal-actions > button { flex: 1; margin-top: 0; }
+
+  /* Sélecteur de couleur du regard (5 couleurs), affiché juste sous le champ N° de regard */
+  .color-picker { display: flex; gap: 10px; margin-top: 6px; }
+  .color-swatch {
+    width: 32px; height: 32px; border-radius: 50%; border: 3px solid transparent;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3); cursor: pointer; padding: 0;
+  }
+  .color-swatch.selected { border-color: #1a1a1a; transform: scale(1.1); }
+
+  .position-box {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    background: #eef5f1;
+    border-radius: 9px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-top: 10px;
+  }
+  .position-box div { flex: 1; min-width: 90px; }
+  .position-box span.val { font-family: var(--mono); font-weight: 600; color: var(--primary-deep); display: block; font-size: 13px; }
+
+  ul.item-list { list-style: none; margin: 10px 0 0; padding: 0; }
+  ul.item-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 2px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13.5px;
+  }
+  ul.item-list li:last-child { border-bottom: none; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--manhole); margin-right:6px; flex-shrink:0; }
+  .dash { display:inline-block; width:14px; height:3px; background:var(--primary); margin-right:6px; flex-shrink:0; vertical-align:middle; }
+  .item-info { flex: 1; }
+  .item-info b { display:flex; align-items:center; font-size: 14px; }
+  .item-info span.meta { color: var(--text-light); font-size: 12px; display:block; font-family: var(--mono); }
+  .item-info span.note { color: var(--text-light); font-size: 12px; display:block; font-family: inherit; font-style: italic; }
+
+  .empty-hint { color: var(--text-light); font-size: 13px; padding: 10px 2px 2px; }
+
+  /* Sélection multiple de collecteurs (addition de longueur) : la liste bascule en
+     mode "case à cocher" — chaque ligne devient tactile sur toute sa largeur au lieu
+     du seul bouton ✕, et un résumé collant en bas de carte affiche le total en direct. */
+  ul.item-list.select-mode li { cursor: pointer; }
+  ul.item-list.select-mode li.selected { background: #eef5f1; border-radius: 8px; }
+  .cond-select-checkbox {
+    width: 20px; height: 20px; border-radius: 5px; border: 2px solid var(--border);
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: white; margin-top: 1px;
+  }
+  li.selected .cond-select-checkbox { background: var(--primary); border-color: var(--primary); }
+  .cond-select-summary {
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--primary-deep); color: white; border-radius: 9px;
+    padding: 10px 14px; margin-top: 12px; font-size: 13.5px;
+  }
+  .cond-select-total { font-family: var(--mono); font-weight: 700; font-size: 15px; }
+
+  .status-msg { font-size: 12.5px; margin-top: 8px; min-height: 14px; line-height: 1.5; }
+  .status-ok { color: var(--success); }
+  .status-err { color: var(--danger); }
+
+  .export-note { font-size:12.5px; color:var(--text-light); margin-top:10px; line-height:1.5; }
+  footer { text-align:center; font-size: 11.5px; color: var(--text-light); padding: 6px 24px 18px; }
+
+  /* sélecteur de fond de carte (Satellite / Plan) */
+  .leaflet-control-layers {
+    border-radius: 9px !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
+  }
+  .leaflet-control-layers-toggle {
+    width: 34px !important; height: 34px !important;
+  }
+  .leaflet-control-layers label { font-size: 13px; color: var(--ink); }
+
+  /* repère orange déplaçable (point en cours de placement) */
+  .draft-pin-icon { background: transparent; border: none; }
+  .draft-pin-icon .pin-shape {
+    width: 26px; height: 26px;
+    border-radius: 50% 50% 50% 0;
+    background: var(--manhole);
+    border: 3px solid white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.45);
+    transform: rotate(-45deg);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Diagnostic Réseau d'Assainissement</h1>
+  <p>Levé terrain — regards et conduites, export KML</p>
+</header>
+
+<main>
+
+  <div class="card locate">
+    <h2>Carte &amp; positionnement</h2>
+    <p class="hint">
+      Ouvrez la carte complète pour ajouter, déplacer ou modifier vos regards et collecteurs directement au doigt. Cet aperçu réduit ne sert qu'à visualiser et géolocaliser.
+    </p>
+
+    <div id="map"></div>
+    <div class="legend">
+      <span><span class="dot"></span>&nbsp;Regard enregistré</span>
+      <span><span class="dash"></span>&nbsp;Collecteur</span>
+    </div>
+
+    <button class="btn-fullmap" onclick="openFullMap()">🗺️ Ouvrir la carte complète (ajouter / modifier / dessiner)</button>
+
+    <div class="row-two">
+      <button class="btn-outline" onclick="refreshPosition()">Me géolocaliser (centrer la carte)</button>
+      <button class="btn-outline" onclick="document.getElementById('importKmlInput').click()">📂 Importer un fichier KML</button>
+    </div>
+    <input type="file" id="importKmlInput" accept=".kml" style="display:none" onchange="handleImportKmlFile(event)">
+    <div class="status-msg" id="posStatus"></div>
+    <div class="status-msg" id="importStatus"></div>
+  </div>
+
+  <div class="card locate" id="coordEntryCard">
+    <h2>
+      Aller à des coordonnées précises
+      <button class="toggle-list-btn" id="coordEntryToggleBtn" onclick="toggleListSection('coordEntry')" aria-label="Afficher/masquer ce formulaire">+</button>
+    </h2>
+    <div class="collapsible-list" id="coordEntryWrap">
+      <p class="hint">
+        Saisissez des coordonnées connues (relevé GPS externe, plan, procès-verbal de bornage…) pour placer un regard exactement à cet endroit, sans avoir à le repérer visuellement sur la carte.
+      </p>
+      <label>Système de coordonnées</label>
+      <select id="coordSystemSelect" onchange="onCoordSystemChange()">
+        <option value="wgs84">WGS 1984 (latitude / longitude, GPS standard)</option>
+        <option value="lambert1">Lambert Maroc — Zone 1 (Nord)</option>
+        <option value="lambert2">Lambert Maroc — Zone 2 (Sud)</option>
+        <option value="lambert3">Lambert Maroc — Zone 3 (Sahara Nord)</option>
+        <option value="lambert4">Lambert Maroc — Zone 4 (Sahara Sud)</option>
+      </select>
+      <div class="row-two">
+        <div>
+          <label id="coordLabelX">Latitude</label>
+          <input id="coordInputX" type="text" inputmode="decimal" placeholder="ex: 33.5731" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="coord-input-x">
+        </div>
+        <div>
+          <label id="coordLabelY">Longitude</label>
+          <input id="coordInputY" type="text" inputmode="decimal" placeholder="ex: -7.5898" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="coord-input-y">
+        </div>
+      </div>
+      <button class="btn-manhole" onclick="goToTypedCoordinates()">📍 Aller à cet endroit et créer un regard</button>
+      <div class="status-msg" id="coordEntryStatus"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>
+      <span class="dot"></span>Regards <span class="badge-count" id="regardCount">0</span>
+      <button class="toggle-list-btn" id="regardToggleBtn" onclick="toggleListSection('regard')" aria-label="Afficher/masquer la liste">+</button>
+    </h2>
+    <div class="collapsible-list" id="regardListWrap">
+      <ul class="item-list" id="regardList"></ul>
+      <div class="empty-hint" id="regardEmptyHint">Aucun regard pour l'instant. Ouvrez la carte complète et touchez un point pour en créer un.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>
+      <span class="dash"></span>Collecteurs <span class="badge-count" id="conduiteCount">0</span>
+      <button class="toggle-list-btn" id="condSelectModeBtn" onclick="toggleCondSelectMode()" aria-label="Sélectionner plusieurs collecteurs" title="Sélectionner plusieurs collecteurs pour additionner leur longueur">Σ</button>
+      <button class="toggle-list-btn" id="condToggleBtn" onclick="toggleListSection('cond')" aria-label="Afficher/masquer la liste">+</button>
+    </h2>
+    <p class="hint" id="condSelectHint" style="display:none;">Touchez les collecteurs à additionner. Un appui long sur la liste fait aussi basculer ce mode.</p>
+    <div class="collapsible-list" id="condListWrap">
+      <ul class="item-list" id="condList"></ul>
+      <div class="empty-hint" id="condEmptyHint">Aucun collecteur pour l'instant. Ouvrez la carte complète, activez le mode "Dessiner un collecteur", puis touchez deux regards.</div>
+    </div>
+    <div class="cond-select-summary" id="condSelectSummary" style="display:none;">
+      <span id="condSelectCountLabel">0 collecteur sélectionné</span>
+      <span class="cond-select-total" id="condSelectTotalLabel">0 m</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Export</h2>
+    <button class="btn-primary" onclick="exportKML()">Télécharger le fichier KML</button>
+    <button class="btn-outline" onclick="exportKML(true)">Ouvrir dans le navigateur (si le téléchargement ne se déclenche pas)</button>
+    <div class="status-msg" id="exportStatus"></div>
+    <p class="export-note">
+      Ouvrez ce fichier dans Google Earth (Fichier > Ouvrir), ou déposez-le dans votre Google Drive pour le retrouver depuis Google Earth Web. Vous pourrez ensuite le convertir en DXF/DWG via QGIS ou AutoCAD Map 3D, comme on l'a vu précédemment.
+    </p>
+    <p class="export-note">
+      <strong>Si le téléchargement ne se déclenche pas</strong> dans l'application (selon l'appareil), le fichier s'ouvrira automatiquement dans un nouvel onglet : utilisez alors le menu « Partager » ou « Enregistrer sous » de votre téléphone pour le sauvegarder dans vos fichiers ou l'envoyer par email/WhatsApp.
+    </p>
+
+    <hr style="margin: 18px 0; border-color: rgba(255,255,255,0.12);">
+
+    <h3 style="margin-bottom:8px;">Synchroniser avec Google Drive / Google Earth</h3>
+    <p class="export-note">
+      Première utilisation : crée automatiquement un nouveau fichier KML dans votre Google Drive. Ouvrez-le ensuite une fois avec Google Earth (clic droit sur le fichier dans Drive > Ouvrir avec > Google Earth) pour obtenir votre carte définitive. Les synchronisations suivantes mettront à jour ce même fichier automatiquement, sans rien re-télécharger ni re-importer.
+    </p>
+    <button class="btn-primary" id="driveSyncBtn" onclick="syncToDrive()">Connecter Google Drive et synchroniser</button>
+    <div class="status-msg" id="driveStatus"></div>
+    <button class="btn-outline-danger" onclick="resetAll()">Réinitialiser toutes les données</button>
+  </div>
+
+</main>
+
+<div id="fullMapOverlay">
+  <div id="fullMapTopBar">
+    <div>
+      <div class="title">Carte complète</div>
+      <div class="count" id="fullMapCount">—</div>
+    </div>
+    <button id="fullMapFullscreenBtn" onclick="toggleBrowserFullscreen()" aria-label="Plein écran" title="Masquer les barres du navigateur">⛶</button>
+    <button id="fullMapCloseBtn" onclick="closeFullMap()" aria-label="Fermer">✕</button>
+  </div>
+  <div id="fullMap"></div>
+
+  <div id="fullMapBottomBar">
+    <div class="bottom-bar-row">
+      <button id="drawModeBtn" class="draw-mode-btn" onclick="toggleDrawMode()">✏️ Dessiner un collecteur</button>
+      <button id="myLocationBtn" onclick="toggleMyLocationTracking()" title="Ma position">📍</button>
+      <button id="northBtn" title="Toucher : revenir au nord. Glisser en cercle : tourner la carte." aria-label="Réorienter vers le nord (glisser pour tourner)">
+        <svg id="northNeedle" viewBox="0 0 24 24" width="22" height="22">
+          <polygon points="12,2 16,12 8,12" fill="var(--manhole)"></polygon>
+          <polygon points="12,22 16,12 8,12" fill="#c9d3cd"></polygon>
+        </svg>
+      </button>
+    </div>
+    <div id="drawModeHint" class="draw-mode-hint"></div>
+  </div>
+</div>
+
+<!-- Saisie rapide : nouveau regard (un seul tap sur la carte) -->
+<div class="modal-backdrop" id="regardModal">
+  <div class="modal-sheet">
+    <h3>Nouveau regard</h3>
+    <label>N° de regard *</label>
+    <input id="modalRegardName" placeholder="ex: R1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="regard-numero-rgd1">
+    <label>Couleur</label>
+    <div class="color-picker" id="modalRegardColorPicker"></div>
+    <label>État du regard</label>
+    <input id="modalRegardEtat" placeholder="ex: bon, fissuré, cassé..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="regard-etat-rgd1">
+    <div class="modal-actions">
+      <button class="btn-outline" onclick="closeRegardModal()">Annuler</button>
+      <button class="btn-manhole" onclick="confirmAddRegard()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Saisie rapide : nouveau collecteur (après avoir touché R1 puis R2) -->
+<div class="modal-backdrop" id="collecteurModal">
+  <div class="modal-sheet">
+    <h3>Nouveau collecteur</h3>
+    <p class="hint" id="collecteurModalSummary"></p>
+    <label>N° de collecteur *</label>
+    <input id="modalCondName" placeholder="ex: C1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="cond-numero-cnd1">
+    <label>Couleur</label>
+    <div class="color-picker" id="modalCondColorPicker"></div>
+    <label>Diamètre</label>
+    <select id="modalCondDiameter">
+      <option value="200">200 mm</option>
+      <option value="300" selected>300 mm</option>
+      <option value="400">400 mm</option>
+      <option value="500">500 mm</option>
+      <option value="600">600 mm</option>
+      <option value="800">800 mm</option>
+      <option value="1000">1000 mm</option>
+    </select>
+    <div class="modal-actions">
+      <button class="btn-outline" onclick="closeCollecteurModal()">Annuler</button>
+      <button class="btn-primary" onclick="confirmAddCollecteur()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modifier / supprimer un regard existant (appui long) -->
+<div class="modal-backdrop" id="editRegardModal">
+  <div class="modal-sheet">
+    <h3>Modifier le regard</h3>
+    <label>N° de regard *</label>
+    <input id="editRegardName" placeholder="ex: R1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="edit-regard-numero-rgd2">
+    <label>Couleur</label>
+    <div class="color-picker" id="editRegardColorPicker"></div>
+    <label>État du regard</label>
+    <input id="editRegardEtat" placeholder="ex: bon, fissuré, cassé..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="edit-regard-etat-rgd2">
+    <div class="position-box">
+      <div>Latitude<span class="val" id="editRegardLatVal">—</span></div>
+      <div>Longitude<span class="val" id="editRegardLonVal">—</span></div>
+    </div>
+    <button class="btn-outline" id="copyRegardCoordsBtn" onclick="copyEditingRegardCoordinates()">📋 Copier les coordonnées WGS 1984</button>
+    <div class="status-msg" id="copyCoordsStatus"></div>
+    <button class="btn-outline" id="moveRegardBtn" onclick="startMoveRegard()">📍 Déplacer ce point sur la carte</button>
+    <div class="modal-actions">
+      <button class="btn-outline-danger" onclick="confirmDeleteRegardFromEdit()">Supprimer</button>
+      <button class="btn-manhole" onclick="confirmEditRegard()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modifier / supprimer un collecteur existant (appui long) -->
+<div class="modal-backdrop" id="editCollecteurModal">
+  <div class="modal-sheet">
+    <h3>Modifier le collecteur</h3>
+    <label>N° de collecteur *</label>
+    <input id="editCondName" placeholder="ex: C1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="edit-cond-numero-cnd2">
+    <label>Couleur</label>
+    <div class="color-picker" id="editCondColorPicker"></div>
+    <label>Regard de départ (sens d'écoulement)</label>
+    <select id="editCondFrom"></select>
+    <label>Regard d'arrivée</label>
+    <select id="editCondTo"></select>
+    <label>Diamètre</label>
+    <select id="editCondDiameter">
+      <option value="200">200 mm</option>
+      <option value="300">300 mm</option>
+      <option value="400">400 mm</option>
+      <option value="500">500 mm</option>
+      <option value="600">600 mm</option>
+      <option value="800">800 mm</option>
+      <option value="1000">1000 mm</option>
+    </select>
+    <div class="modal-actions">
+      <button class="btn-outline-danger" onclick="confirmDeleteCollecteurFromEdit()">Supprimer</button>
+      <button class="btn-primary" onclick="confirmEditCollecteur()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Boîte de confirmation maison (remplace window.confirm()) : indispensable car
+     Chrome quitte automatiquement le mode plein écran natif dès qu'une boîte de
+     dialogue système (confirm/alert/prompt) s'affiche — un comportement de sécurité
+     volontaire et permanent du navigateur, pas un bug qu'on peut contourner en
+     gardant confirm(). Cette fiche HTML classique reste, elle, à l'intérieur du
+     plein écran. -->
+<div class="modal-backdrop" id="customConfirmModal">
+  <div class="modal-sheet" id="customConfirmSheet">
+    <h3 id="customConfirmTitle">Confirmer</h3>
+    <p class="hint" id="customConfirmMessage" style="white-space: pre-line;"></p>
+    <div class="modal-actions">
+      <button class="btn-outline" id="customConfirmCancelBtn">Annuler</button>
+      <button class="btn-outline-danger" id="customConfirmOkBtn">Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<footer>Les données sont sauvegardées automatiquement sur cet appareil (mémoire locale du navigateur/de l'application). Si vous changez d'appareil ou désinstallez l'application, exportez le KML ou synchronisez avec Google Drive avant pour ne rien perdre.</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<!-- leaflet-rotate (Raruto) : ajoute la rotation libre de la carte (2 doigts sur mobile,
+     Maj + glisser à la souris) ainsi qu'un "bearing" programmable, utilisés ci-dessous par
+     le nouveau bouton boussole "Nord" de la carte plein écran. Doit être chargé juste après
+     leaflet.js — la librairie se greffe sur l'objet L existant sans le remplacer.
+     Compatible Leaflet 1.9.x (celui utilisé ici). -->
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
+<script>
+  // ----- State -----
+  let regards = [];
+  let conduites = [];
+  let map, markerLayerGroup, lineLayerGroup;
+  const STORAGE_KEY = 'assainissement-survey-data';
+  const hasStorage = typeof window.storage !== 'undefined';
+
+  // Google Drive sync config
+  // Remplacez cette valeur si vous changez de projet Google Cloud.
+  const GOOGLE_CLIENT_ID = '137568158771-nb9sej1vjcn2l4l575d4fga6jk16a549.apps.googleusercontent.com';
+  const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+  // Clé utilisée pour mémoriser le jeton d'accès en mémoire (variable JS) pendant
+  // la session de la page, et l'action en attente (pour la reprendre après le retour
+  // de Google) dans le stockage du navigateur — nécessaire car la page est entièrement
+  // rechargée lors du flux de redirection OAuth (voir explication plus bas).
+  const DRIVE_PENDING_ACTION_KEY = 'driveOAuthPendingAction';
+  let driveAccessToken = null;
+  let driveTokenExpiresAt = 0;
+
+  // ----- Init -----
+  window.addEventListener('DOMContentLoaded', async () => {
+    initMap();
+    initNorthBtnDial();
+    initCondListLongPress();
+    await loadData();
+    renderAll();
+    checkOAuthRedirectResult();
+  });
+
+  // Enregistrement du Service Worker, requis pour que Chrome/Brave proposent
+  // l'installation de cette page comme PWA (icône sur l'écran d'accueil).
+  // On commence par désinscrire toute ancienne version (ex: une version précédente
+  // avec un fetch handler buggé qui causait l'écran "Hors connexion" au premier
+  // lancement) : un Service Worker déjà actif ne se remplace pas automatiquement
+  // juste parce que le fichier a changé sur le serveur, il faut explicitement le
+  // désinscrire. On enregistre ensuite sw-v2.js (nom différent de sw.js) pour que
+  // le navigateur le traite sans ambiguïté comme un nouveau Service Worker.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const reg of regs) {
+          await reg.unregister();
+        }
+      } catch (e) {
+        console.warn('Nettoyage des anciens Service Workers impossible', e);
+      }
+      navigator.serviceWorker.register('sw-v2.js').catch(e => console.warn('Service Worker non enregistré', e));
+    });
+  }
+
+  function addBaseLayers(targetMap) {
+    // Fond satellite Google — imagerie généralement plus récente et plus détaillée
+    // qu'Esri dans de nombreuses régions (Maroc inclus). Utilisé par défaut.
+    const googleSatLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+      maxZoom: 21,
+      maxNativeZoom: 20,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+      attribution: '&copy; Google'
+    });
+    // Variante "hybride" Google : satellite + noms de rues/lieux superposés
+    const googleHybridLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+      maxZoom: 21,
+      maxNativeZoom: 20,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+      attribution: '&copy; Google'
+    });
+
+    // Fond satellite Esri (imagerie Esri/Maxar), conservé comme alternative :
+    // utile si Google est lent à charger ou si une zone est mieux couverte par Esri.
+    // maxNativeZoom plus bas que maxZoom : au-delà de la résolution réellement
+    // disponible à cet endroit, Leaflet agrandit la dernière tuile existante
+    // au lieu d'afficher du vide.
+    const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 21,
+      maxNativeZoom: 19,
+      attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, GIS User Community'
+    });
+    const labelLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 21,
+      maxNativeZoom: 19,
+      attribution: 'Esri'
+    });
+    const esriSatelliteView = L.layerGroup([satLayer, labelLayer]);
+
+    // Fond plan (rues), mis à jour en continu par la communauté OpenStreetMap.
+    // Couverture mondiale fiable même là où l'imagerie satellite haute résolution manque.
+    const planLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    });
+
+    googleHybridLayer.addTo(targetMap);
+    L.control.layers({
+      'Satellite Google (hybride)': googleHybridLayer,
+      'Satellite Google': googleSatLayer,
+      'Satellite Esri': esriSatelliteView,
+      'Plan (rues)': planLayer
+    }, null, { position: 'topright', collapsed: true }).addTo(targetMap);
+  }
+
+  function initMap() {
+    map = L.map('map', { zoomControl: true, maxZoom: 21, preferCanvas: true }).setView([31.7, -7.0], 6);
+    addBaseLayers(map);
+    markerLayerGroup = L.layerGroup().addTo(map);
+    lineLayerGroup = L.layerGroup().addTo(map);
+  }
+
+  // ----- Carte plein écran : c'est ici que se fait tout le travail de terrain -----
+  // - Un tap simple sur du vide  -> crée un nouveau regard à cet endroit
+  // - Un tap simple sur un regard, en mode "dessin de collecteur" -> sélectionne R1 puis R2
+  // - Un appui long sur un regard ou un collecteur -> ouvre sa fiche de modification/suppression
+  let fullMap = null;
+  let fullMapMarkerLayer = null;
+  let fullMapLineLayer = null;
+  let fullMapHasFitOnce = false; // évite de re-zoomer/dézoomer à chaque re-rendu (ex: pendant le dessin d'un collecteur)
+  let drawMode = false;          // true = on est en train de choisir R1 puis R2 pour un collecteur
+  let drawFromRegardId = null;   // id du regard "départ" déjà sélectionné en mode dessin
+  let pendingNewRegardLatLng = null; // coordonnées en attente de confirmation dans la fiche "Nouveau regard"
+  let editingRegardId = null;
+  let editingCollecteurId = null;
+  let moveRegardMode = false; // true = on attend un tap sur la carte pour déplacer editingRegardId
+  const LONG_PRESS_MS = 480;
+  let fullMapSvgRenderer = null; // renderer SVG dédié aux zones tactiles des collecteurs (voir lineTouchTarget)
+
+  function openFullMap() {
+    document.getElementById('fullMapOverlay').classList.add('open');
+    // Tente de passer en plein écran natif du navigateur (masque la barre d'adresse
+    // ET la barre de navigation système sur la plupart des Chrome Android). Doit être
+    // appelé directement depuis un geste utilisateur (le clic sur "Ouvrir la carte"),
+    // sinon le navigateur refuse silencieusement la demande. On ignore l'erreur si le
+    // plein écran est refusé/non supporté : la carte reste utilisable normalement.
+    requestBrowserFullscreen();
+    if (!fullMap) {
+      fullMap = L.map('fullMap', {
+        zoomControl: true,
+        maxZoom: 21,
+        preferCanvas: true,
+        // --- Rotation libre de la carte (leaflet-rotate) ---
+        // "rotate" doit impérativement être fourni ici, à la création de la carte : le
+        // définir après coup (map.options.rotate = true) ne l'active pas.
+        rotate: true,
+        bearing: 0,             // oriente vers le nord au premier chargement
+        // touchRotate (rotation à 2 doigts) est volontairement DÉSACTIVÉE : c'est un bug
+        // confirmé, connu et jamais corrigé dans leaflet-rotate (voir Raruto/leaflet-rotate
+        // PR #48 "Prevent map from rotating when user just wants to zoom" — le plugin ne
+        // distingue pas fiablement "pincer pour zoomer" de "tourner à 2 doigts", donc un
+        // simple pincement fait aussi légèrement pivoter la carte, ce qui provoquait à la
+        // fois la rotation involontaire ET le décalage/retard des collecteurs pendant le
+        // zoom (les deux symptômes signalés viennent de la même cause). Tenter de forcer
+        // une animation de zoom instantanée pour masquer le décalage (essayé précédemment)
+        // ne traitait que le symptôme, pas la cause, d'où le nouveau problème que ça a créé.
+        // La rotation tactile précise est maintenant assurée par un cadran dédié, entièrement
+        // indépendant du pincement (voir initNorthBtnDial plus bas) : aucune ambiguïté de
+        // geste n'est donc plus possible, et le zoom retrouve son animation fluide normale.
+        touchRotate: false,
+        shiftKeyRotate: true,  // rotation à la souris (Maj + glisser), pour une utilisation au clavier/souris
+        rotateControl: false   // on masque la boussole générique du plugin : notre bouton
+                                // #northBtn plus bas, stylé comme le reste de l'app, la remplace
+      }).setView([31.7, -7.0], 6);
+      fullMapSvgRenderer = L.svg().addTo(fullMap);
+      addBaseLayers(fullMap);
+      fullMapLineLayer = L.layerGroup().addTo(fullMap);
+      fullMapMarkerLayer = L.layerGroup().addTo(fullMap);
+
+      // Tap simple sur le fond de carte (pas sur un marqueur) = nouveau regard à cet endroit,
+      // sauf si on est en plein dessin de collecteur (on doit alors taper sur des regards
+      // existants), ou en plein déplacement d'un regard existant (le tap suivant déplace
+      // ce regard à cet endroit au lieu d'en créer un nouveau).
+      fullMap.on('click', (e) => {
+        if (moveRegardMode) {
+          confirmMoveRegard(e.latlng.lat, e.latlng.lng);
+          return;
+        }
+        if (drawMode) {
+          setDrawHint('Touchez un regard existant pour ' + (drawFromRegardId ? 'le point d\'arrivée.' : 'le point de départ.'));
+          return;
+        }
+        openRegardModalForNewPoint(e.latlng.lat, e.latlng.lng);
+      });
+
+      // Garde l'aiguille du bouton #northBtn et toutes les flèches de sens d'écoulement
+      // synchronisées avec l'orientation actuelle de la carte pendant qu'on la fait
+      // pivoter (glisser à 2 doigts / Maj+glisser) : l'aiguille indique le vrai nord
+      // comme sur Google Maps, et les flèches restent visuellement fixes.
+      fullMap.on('rotate', () => { updateNorthNeedle(); updateAllFlowArrowRotations(); });
+    }
+    setTimeout(() => { fullMap.invalidateSize(); renderFullMap(); }, 50);
+  }
+
+  function closeFullMap() {
+    document.getElementById('fullMapOverlay').classList.remove('open');
+    exitDrawMode();
+    stopMyLocationTracking();
+    moveRegardMode = false;
+    setDrawHint('');
+    exitBrowserFullscreen();
+  }
+
+  // ----- Boussole / réorientation vers le nord (carte plein écran) -----
+  // "bearing" (leaflet-rotate) suit la convention cartographique standard : 0° = nord
+  // en haut, augmente dans le sens horaire (identique à la fonction computeBearing()
+  // déjà utilisée plus bas pour l'export KML). Faire pivoter la carte de +X° revient à
+  // faire pivoter visuellement son contenu de -X° (sens anti-horaire) à l'écran ; pour
+  // que l'aiguille continue de pointer vers le vrai nord, on lui applique donc la même
+  // rotation "-bearing".
+  function updateNorthNeedle() {
+    const needle = document.getElementById('northNeedle');
+    if (!needle || !fullMap || typeof fullMap.getBearing !== 'function') return;
+    const bearing = fullMap.getBearing() || 0;
+    needle.style.transform = 'rotate(' + (-bearing) + 'deg)';
+  }
+
+  function getFullMapBearing() {
+    return (fullMap && typeof fullMap.getBearing === 'function') ? (fullMap.getBearing() || 0) : 0;
+  }
+
+  // ----- Flèche de sens d'écoulement : rotation compensée pour rester fixe -----
+  // La flèche (.cond-icon-arrow) vit dans le même calque que la carte (markerPane), qui
+  // pivote entièrement avec elle une fois la rotation activée : sans compensation, la
+  // flèche paraît donc pivoter/se pencher à chaque rotation de la carte, même si sa
+  // valeur CSS d'origine (angleDeg, calculée une fois pour toutes à partir du cap
+  // géographique départ->arrivée) ne change jamais. On lui ajoute donc dynamiquement le
+  // bearing actuel de la carte pour annuler exactement cette rotation involontaire du
+  // calque et garder la flèche visuellement fixe/droite, quelle que soit l'orientation
+  // choisie — contrairement à l'étiquette du nom, volontairement laissée telle quelle.
+  function applyFlowArrowRotation(marker, angleDeg) {
+    if (!marker) return;
+    const el = marker.getElement && marker.getElement();
+    if (!el) { setTimeout(() => applyFlowArrowRotation(marker, angleDeg), 50); return; }
+    const arrowEl = el.querySelector('.cond-icon-arrow');
+    if (arrowEl) arrowEl.style.transform = 'rotate(' + (angleDeg + getFullMapBearing()) + 'deg)';
+  }
+
+  function updateAllFlowArrowRotations() {
+    condLayerCache.forEach(entry => applyFlowArrowRotation(entry.marker, entry.lastAngle));
+  }
+
+  let northAnimFrame = null;
+
+  function resetMapNorth() {
+    if (!fullMap || typeof fullMap.setBearing !== 'function') return;
+    if (northAnimFrame) cancelAnimationFrame(northAnimFrame);
+
+    const startBearing = fullMap.getBearing() || 0;
+    // Choisit le sens de rotation le plus court pour revenir à 0° (ex : depuis 350°,
+    // on avance de +10° plutôt que de reculer de -350°).
+    const delta = ((0 - startBearing + 540) % 360) - 180;
+    if (Math.abs(delta) < 0.5) { fullMap.setBearing(0); updateNorthNeedle(); return; }
+
+    const durationMs = 350;
+    const startTime = performance.now();
+    function step(now) {
+      const t = Math.min(1, (now - startTime) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic : ralentit en douceur à l'arrivée
+      fullMap.setBearing(startBearing + delta * eased);
+      updateNorthNeedle();
+      if (t < 1) {
+        northAnimFrame = requestAnimationFrame(step);
+      } else {
+        fullMap.setBearing(0); // évite tout écart d'arrondi résiduel
+        updateNorthNeedle();
+        northAnimFrame = null;
+      }
+    }
+    northAnimFrame = requestAnimationFrame(step);
+  }
+
+  // ----- Cadran de rotation sur #northBtn (remplace touchRotate) -----
+  // Toucher/cliquer sans bouger : revient au nord (resetMapNorth). Glisser en cercle
+  // autour du bouton : fait pivoter la carte, en suivant le doigt/la souris. Ce geste
+  // est entièrement séparé du pincement à 2 doigts sur la carte (utilisé uniquement
+  // pour zoomer désormais) : il n'y a donc plus aucune ambiguïté possible entre
+  // "zoomer" et "tourner".
+  //
+  // Important : on accumule la DIFFÉRENCE d'angle entre deux positions successives du
+  // doigt, plutôt que de convertir sa position ABSOLUE autour du bouton en un bearing
+  // absolu. Avec une position absolue, la rotation totale possible en UN geste continu
+  // est limitée par l'amplitude naturelle du poignet (environ 60-90°) ; en relâchant
+  // puis en retouchant le bouton pour continuer, le nouveau geste repartait alors de la
+  // position ABSOLUE du doigt et annulait une partie de la rotation déjà faite — d'où
+  // le blocage observé autour de 60°. En accumulant plutôt un delta à chaque geste, la
+  // carte continue toujours depuis son orientation actuelle : plusieurs glissements
+  // successifs (comme on tournerait un volant à petits coups) permettent d'atteindre
+  // n'importe quel angle, sans limite.
+  const NORTH_BTN_DRAG_THRESHOLD_PX = 6;
+
+  function initNorthBtnDial() {
+    const btn = document.getElementById('northBtn');
+    if (!btn) return;
+    let dragging = false;
+    let moved = false;
+    let startX = 0, startY = 0;    // position du doigt au pointerdown (pour distinguer tap / glissement)
+    let lastPointerAngle = 0;      // angle du doigt autour du bouton, mis à jour à chaque déplacement
+    let runningBearing = 0;        // bearing de la carte accumulé pendant le geste en cours
+
+    function angleFromCenter(clientX, clientY) {
+      const rect = btn.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = clientX - cx;
+      const dy = clientY - cy;
+      return Math.atan2(dx, -dy) * 180 / Math.PI; // -180..180, 0° = doigt au-dessus du centre
+    }
+
+    btn.addEventListener('pointerdown', (e) => {
+      if (!fullMap || typeof fullMap.setBearing !== 'function') return;
+      if (northAnimFrame) { cancelAnimationFrame(northAnimFrame); northAnimFrame = null; }
+      dragging = true;
+      moved = false;
+      startX = e.clientX; startY = e.clientY;
+      lastPointerAngle = angleFromCenter(e.clientX, e.clientY);
+      runningBearing = fullMap.getBearing() || 0; // toujours resynchronisé sur l'état réel actuel
+      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+
+    btn.addEventListener('pointermove', (e) => {
+      if (!dragging || !fullMap) return;
+      if (!moved && Math.hypot(e.clientX - startX, e.clientY - startY) > NORTH_BTN_DRAG_THRESHOLD_PX) {
+        moved = true;
+      }
+      if (moved) {
+        const currentAngle = angleFromCenter(e.clientX, e.clientY);
+        // Delta le plus court entre les deux angles (évite un saut de ~360° quand on
+        // traverse la ligne nord/0°).
+        const delta = ((currentAngle - lastPointerAngle + 540) % 360) - 180;
+        runningBearing = (runningBearing + delta + 360) % 360;
+        lastPointerAngle = currentAngle;
+        fullMap.setBearing(runningBearing);
+      }
+    });
+
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (!moved) resetMapNorth(); // simple appui, sans glissement -> retour au nord
+    }
+    btn.addEventListener('pointerup', endDrag);
+    btn.addEventListener('pointercancel', endDrag);
+  }
+
+  // ----- Plein écran natif du navigateur (Fullscreen API) -----
+  // But : masquer la barre d'adresse et la barre de navigation système de Chrome
+  // pendant l'utilisation de la carte, sans passer par l'installation d'une PWA
+  // (impossible sur certains téléphones/versions de Chrome où l'option "Installer"
+  // n'apparaît pas dans le menu, quelle que soit la qualité du manifest). C'est un
+  // mécanisme web standard indépendant de l'installabilité PWA : il fonctionne dans
+  // un simple onglet Chrome, tant que l'appel part d'un vrai geste utilisateur
+  // (clic sur un bouton), ce qui est le cas ici (bouton "Ouvrir la carte complète"
+  // et bouton ⛶ dédié).
+  function requestBrowserFullscreen() {
+    const el = document.documentElement;
+    const request = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+    if (!request) {
+      setDrawHint('Plein écran non supporté par ce navigateur (API absente).');
+      return;
+    }
+    const result = request.call(el);
+    // request.call() peut renvoyer une Promise (API standard) ou rien du tout
+    // (anciens préfixes webkit/moz/ms) : on ne traite le diagnostic que si une
+    // vraie Promise est retournée.
+    if (result && typeof result.catch === 'function') {
+      result.catch((err) => {
+        // Affiché directement dans l'app (setDrawHint, déjà utilisé pour les
+        // messages de dessin de collecteur) pour diagnostiquer sans console
+        // de développeur, impossible à ouvrir sur un téléphone normal.
+        setDrawHint('Plein écran refusé : ' + (err && err.name ? err.name : '') + ' ' + (err && err.message ? err.message : String(err)));
+      });
+    }
+  }
+
+  function exitBrowserFullscreen() {
+    const isFs = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+    if (!isFs) return;
+    const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+    if (exit) {
+      exit.call(document).catch(() => { /* ignore */ });
+    }
+  }
+
+  function toggleBrowserFullscreen() {
+    const isFs = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+    if (isFs) {
+      exitBrowserFullscreen();
+    } else {
+      requestBrowserFullscreen();
+    }
+  }
+
+  // Garde le bouton ⛶ synchronisé avec l'état réel (ex: si l'utilisateur quitte le
+  // plein écran avec le geste système Android plutôt qu'avec notre bouton).
+  document.addEventListener('fullscreenchange', updateFullscreenBtnIcon);
+  document.addEventListener('webkitfullscreenchange', updateFullscreenBtnIcon);
+  function updateFullscreenBtnIcon() {
+    const btn = document.getElementById('fullMapFullscreenBtn');
+    if (!btn) return;
+    const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+    btn.textContent = isFs ? '⛶' : '⛶';
+    btn.title = isFs ? 'Quitter le plein écran' : 'Masquer les barres du navigateur';
+  }
+
+  // ----- Fiches (modals) toujours visibles au-dessus du clavier virtuel -----
+  // Sur Android, le clavier réduit la fenêtre visuelle (visualViewport) mais PAS la
+  // fenêtre de mise en page (layout viewport) que `position: fixed` utilise par
+  // défaut : une fiche ancrée en bas avec `inset:0` reste donc calculée par rapport
+  // à la hauteur totale de l'écran, et se retrouve cachée derrière le clavier.
+  // window.visualViewport expose la hauteur réellement visible ; on l'utilise pour
+  // (1) limiter la hauteur de la fiche ouverte à cet espace réel et (2) la
+  // repositionner juste au-dessus du clavier au lieu de tout en bas de l'écran.
+  function adjustOpenModalForKeyboard() {
+    const openSheet = document.querySelector('.modal-backdrop.open .modal-sheet');
+    if (!openSheet) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    // Hauteur masquée par le clavier = différence entre la hauteur de mise en page
+    // (innerHeight, stable) et la hauteur visuelle réelle restante (vv.height).
+    const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    if (keyboardHeight > 80) {
+      // Clavier ouvert : on pousse la fiche juste au-dessus de lui et on limite sa
+      // hauteur à l'espace restant, avec défilement interne pour le contenu en trop
+      // (ex : le bouton "Enregistrer" reste atteignable même avec le clavier ouvert).
+      openSheet.style.position = 'fixed';
+      openSheet.style.bottom = keyboardHeight + 'px';
+      openSheet.style.maxHeight = (vv.height - 16) + 'px';
+    } else {
+      // Clavier fermé : on revient au comportement normal défini en CSS.
+      openSheet.style.position = '';
+      openSheet.style.bottom = '';
+      openSheet.style.maxHeight = '';
+    }
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', adjustOpenModalForKeyboard);
+    window.visualViewport.addEventListener('scroll', adjustOpenModalForKeyboard);
+  }
+
+  // ----- Boîte de confirmation maison (remplace window.confirm()) -----
+  // Retourne une Promise<boolean>, exactement comme on utiliserait confirm() de façon
+  // synchrone : `if (!(await customConfirm('...'))) return;`. Un seul dialogue à la
+  // fois (pas de file d'attente) : suffisant ici car l'app n'enchaîne jamais deux
+  // confirmations à la suite.
+  let _customConfirmResolve = null;
+  function customConfirm(message, okLabel) {
+    return new Promise((resolve) => {
+      _customConfirmResolve = resolve;
+      document.getElementById('customConfirmMessage').textContent = message;
+      document.getElementById('customConfirmOkBtn').textContent = okLabel || 'Confirmer';
+      document.getElementById('customConfirmModal').classList.add('open');
+    });
+  }
+  function _closeCustomConfirm(result) {
+    document.getElementById('customConfirmModal').classList.remove('open');
+    const resolve = _customConfirmResolve;
+    _customConfirmResolve = null;
+    if (resolve) resolve(result);
+  }
+  document.getElementById('customConfirmOkBtn').addEventListener('click', () => _closeCustomConfirm(true));
+  document.getElementById('customConfirmCancelBtn').addEventListener('click', () => _closeCustomConfirm(false));
+  // Cliquer sur le fond sombre équivaut à "Annuler" (comportement standard des
+  // autres fiches de l'app, ex: regardModal).
+  document.getElementById('customConfirmModal').addEventListener('click', (e) => {
+    if (e.target.id === 'customConfirmModal') _closeCustomConfirm(false);
+  });
+
+  // Quand un champ texte de fiche reçoit le focus (clavier qui s'ouvre), on s'assure
+  // aussi qu'il défile bien dans le champ visible une fois le clavier déployé —
+  // léger délai car le clavier prend un instant à s'ouvrir sur Android.
+  document.addEventListener('focusin', (e) => {
+    if (e.target.matches('.modal-sheet input, .modal-sheet textarea, .modal-sheet select')) {
+      setTimeout(() => {
+        adjustOpenModalForKeyboard();
+        e.target.scrollIntoView({ block: 'nearest' });
+      }, 250);
+    }
+  });
+
+  function toggleDrawMode() {
+    if (drawMode) { exitDrawMode(); return; }
+    if (moveRegardMode) { moveRegardMode = false; } // on ne peut pas dessiner pendant un déplacement de regard en cours
+    drawMode = true;
+    drawFromRegardId = null;
+    document.getElementById('drawModeBtn').classList.add('active');
+    document.getElementById('drawModeBtn').textContent = '✕ Annuler le dessin';
+    setDrawHint('Touchez le regard de DÉPART du collecteur (sens d\'écoulement).');
+  }
+
+  function exitDrawMode() {
+    drawMode = false;
+    drawFromRegardId = null;
+    const btn = document.getElementById('drawModeBtn');
+    if (btn) { btn.classList.remove('active'); btn.textContent = '✏️ Dessiner un collecteur'; }
+    setDrawHint('');
+    renderFullMap(); // retire le surlignage du regard de départ déjà choisi
+  }
+
+  function setDrawHint(msg) {
+    const el = document.getElementById('drawModeHint');
+    if (el) el.textContent = msg;
+  }
+
+  // Appelé quand on touche un regard pendant le dessin d'un collecteur.
+  function handleRegardTapInDrawMode(regardId) {
+    if (!drawFromRegardId) {
+      drawFromRegardId = regardId;
+      const r = regards.find(x => x.id === regardId);
+      setDrawHint('Départ : ' + (r ? r.name : '?') + '. Touchez maintenant le regard d\'ARRIVÉE.');
+      renderFullMap();
+      return;
+    }
+    if (drawFromRegardId === regardId) {
+      setDrawHint('Choisissez un regard d\'arrivée différent du départ.');
+      return;
+    }
+    openCollecteurModal(drawFromRegardId, regardId);
+  }
+
+  // ----- Pression longue générique sur un élément Leaflet (marqueur ou ligne) -----
+  // Leaflet a sa propre détection de pression longue tactile en interne (qui simule un
+  // clic droit / contextmenu après 1 seconde), ce qui entrait en conflit avec toute
+  // tentative de minuteur basé sur les événements mousedown/touchstart/mouseout exposés
+  // par les layers Leaflet — la pression longue ne se déclenchait quasiment jamais de
+  // façon fiable. Solution : on contourne complètement le système d'événements de
+  // Leaflet pour cette détection, et on écoute directement, avec les Pointer Events
+  // (API moderne unifiée souris/tactile/stylet, plus fiable que mouse+touch séparés),
+  // l'élément DOM réel généré par Leaflet pour cette forme (layer.getElement()).
+  const LONG_PRESS_MOVE_TOLERANCE_PX = 25;
+
+  function bindLongPress(layer, onLongPress, onShortTap) {
+    function getDomElement() {
+      // L.Marker (icônes divIcon) expose officiellement getElement(). Les formes
+      // vectorielles (L.CircleMarker, L.Polyline, basées sur L.Path) ne l'exposent
+      // pas mais stockent leur élément DOM réel dans la propriété interne _path.
+      if (layer.getElement) {
+        const el = layer.getElement();
+        if (el) return el;
+      }
+      return layer._path || null;
+    }
+
+    function attach() {
+      const el = getDomElement();
+      if (!el) { setTimeout(attach, 50); return; } // l'élément DOM n'existe pas encore juste après l'ajout à la carte
+      el.style.touchAction = 'none'; // empêche le navigateur d'intercepter le geste pour scroller/zoomer pendant l'appui
+      el.style.pointerEvents = 'all'; // un SVG path totalement transparent (fillOpacity 0) peut sinon être ignoré pour les events
+
+      let timer = null;
+      let firedLong = false;
+      let startX = 0, startY = 0;
+      let dragWasEnabled = true;
+
+      function restoreDragging() {
+        if (fullMap && fullMap.dragging && dragWasEnabled) fullMap.dragging.enable();
+      }
+
+      function onPointerDown(e) {
+        firedLong = false;
+        startX = e.clientX; startY = e.clientY;
+        if (fullMap && fullMap.dragging) {
+          dragWasEnabled = fullMap.dragging.enabled();
+          if (dragWasEnabled) fullMap.dragging.disable();
+        }
+        timer = setTimeout(() => {
+          firedLong = true;
+          restoreDragging();
+          onLongPress();
+        }, LONG_PRESS_MS);
+        e.stopPropagation();
+      }
+
+      function onPointerMove(e) {
+        if (!timer) return;
+        const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (dist > LONG_PRESS_MOVE_TOLERANCE_PX) onPointerCancel();
+      }
+
+      function onPointerUp(e) {
+        if (timer) { clearTimeout(timer); timer = null; }
+        restoreDragging();
+        if (!firedLong && onShortTap) onShortTap();
+        e.stopPropagation();
+      }
+
+      function onPointerCancel() {
+        if (timer) { clearTimeout(timer); timer = null; }
+        restoreDragging();
+      }
+
+      el.addEventListener('pointerdown', onPointerDown);
+      el.addEventListener('pointermove', onPointerMove);
+      el.addEventListener('pointerup', onPointerUp);
+      el.addEventListener('pointercancel', onPointerCancel);
+      el.addEventListener('pointerleave', onPointerCancel);
+    }
+    attach();
+  }
+
+  // Caches associant chaque regard/collecteur à ses calques Leaflet déjà créés.
+  // But : ne JAMAIS recréer un calque (et donc rattacher des écouteurs d'événements)
+  // pour un point/trait qui existe déjà depuis le rendu précédent. Avant cette
+  // optimisation, chaque appel à renderFullMap() supprimait puis recréait TOUS les
+  // calques de zéro (y compris leurs écouteurs pointerdown/up/move dédiés à la
+  // pression longue) — même pour ajouter un seul nouveau point. Avec des dizaines
+  // d'appels à renderFullMap() pendant une session de saisie, les écouteurs et objets
+  // en attente de nettoyage s'accumulaient en mémoire bien plus vite que le garbage
+  // collector ne pouvait les libérer, d'où un ralentissement progressif très rapide
+  // de la carte entière (pas seulement des points), même avec très peu d'éléments.
+  const regardLayerCache = new Map();   // id -> { marker, touchTarget, label }
+  const condLayerCache = new Map();     // id -> { line, touchTarget, arrow, label }
+
+  // Icône combinée d'un regard : point coloré + étiquette de nom, en un seul élément
+  // DOM (au lieu de 3 calques séparés), avec une zone cliquable suffisamment grande
+  // (44px) pour un appui fiable au doigt sans agrandir le point visuel lui-même.
+  // Icône combinée d'un collecteur : flèche de sens d'écoulement + étiquette de nom,
+  // en un seul élément DOM, affichée au milieu du tracé.
+  function buildCollecteurIcon(color, name, angleDeg) {
+    const html =
+      '<div class="cond-icon-wrap">' +
+        '<div class="cond-icon-arrow" style="transform: rotate(' + angleDeg + 'deg); border-top-color:' + color + ';"></div>' +
+        '<div class="cond-icon-label">' + escapeHTML(name) + '</div>' +
+      '</div>';
+    return L.divIcon({ className: 'cond-icon', html, iconSize: [14, 12], iconAnchor: [7, 6] });
+  }
+
+  function buildRegardIcon(color, name, highlighted) {
+    const dotSize = highlighted ? 20 : 16;
+    const borderColor = highlighted ? '#c0392b' : '#ffffff';
+    const html =
+      '<div class="regard-icon-touch">' +
+        '<div class="regard-icon-dot" style="width:' + dotSize + 'px;height:' + dotSize + 'px;background:' + color + ';border-color:' + borderColor + ';"></div>' +
+        '<div class="regard-icon-label">' + escapeHTML(name) + '</div>' +
+      '</div>';
+    return L.divIcon({ className: 'regard-icon', html, iconSize: [44, 44], iconAnchor: [22, 22] });
+  }
+
+  function renderFullMap() {
+    if (!fullMap) return;
+    const bounds = [];
+    const seenRegardIds = new Set();
+    const seenCondIds = new Set();
+
+    regards.forEach(r => {
+      seenRegardIds.add(r.id);
+      const isDrawFrom = drawMode && drawFromRegardId === r.id;
+      const color = r.color || DEFAULT_REGARD_COLOR;
+      let entry = regardLayerCache.get(r.id);
+
+      if (!entry) {
+        // Un seul L.Marker (divIcon) combine le point visuel + sa zone tactile + son
+        // étiquette de nom, au lieu de 3 calques séparés : moitié moins d'éléments DOM
+        // à repositionner par Leaflet à chaque frame de déplacement de la carte, ce qui
+        // est la cause principale du ralentissement au glissement (pan) constaté dès
+        // que la zone contient des points, même peu nombreux.
+        const marker = L.marker([r.lat, r.lon], {
+          icon: buildRegardIcon(color, r.name, false),
+          keyboard: false
+        }).addTo(fullMapMarkerLayer);
+
+        // bindLongPress n'est appelée qu'ICI, une seule fois par regard pour toute la
+        // durée de vie de la carte (sauf suppression) : les écouteurs ne sont jamais dupliqués.
+        bindLongPress(marker, () => openEditRegardModal(r.id), () => {
+          if (drawMode) handleRegardTapInDrawMode(r.id);
+          else if (moveRegardMode) confirmMoveRegard(r.lat, r.lon);
+        });
+
+        entry = { marker, lastLat: r.lat, lastLon: r.lon, lastColor: color, lastName: r.name, lastHighlight: false };
+        regardLayerCache.set(r.id, entry);
+      } else {
+        // Déjà existant : on met juste à jour position/couleur/nom si besoin, sans
+        // recréer aucun calque ni aucun écouteur d'événement.
+        if (entry.lastLat !== r.lat || entry.lastLon !== r.lon) {
+          entry.marker.setLatLng([r.lat, r.lon]);
+          entry.lastLat = r.lat; entry.lastLon = r.lon;
+        }
+      }
+
+      // Surbrillance du regard de départ choisi pendant le dessin d'un collecteur, ou
+      // changement de couleur/nom : on régénère l'icône seulement si quelque chose a
+      // vraiment changé, jamais à chaque rendu.
+      if (entry.lastColor !== color || entry.lastName !== r.name || entry.lastHighlight !== isDrawFrom) {
+        entry.marker.setIcon(buildRegardIcon(color, r.name, isDrawFrom));
+        entry.lastColor = color; entry.lastName = r.name; entry.lastHighlight = isDrawFrom;
+      }
+
+      bounds.push([r.lat, r.lon]);
+    });
+
+    // Supprime les calques des regards qui n'existent plus (vraie suppression demandée
+    // par l'utilisateur) — c'est le seul cas où l'on retire des calques de la carte.
+    for (const [id, entry] of regardLayerCache) {
+      if (!seenRegardIds.has(id)) {
+        fullMapMarkerLayer.removeLayer(entry.marker);
+        regardLayerCache.delete(id);
+      }
+    }
+
+    conduites.forEach(c => {
+      const rFrom = regards.find(r => r.id === c.from);
+      const rTo = regards.find(r => r.id === c.to);
+      if (!rFrom || !rTo) return;
+      seenCondIds.add(c.id);
+
+      const condColor = c.color || DEFAULT_COND_COLOR;
+      const midLat = (rFrom.lat + rTo.lat) / 2;
+      const midLon = (rFrom.lon + rTo.lon) / 2;
+      // Triangle indiquant le sens d'écoulement (départ -> arrivée), au milieu du tracé.
+      // Le triangle CSS (border-top) pointe vers le bas par défaut (angle visuel 0° = bas),
+      // alors que atan2 calcule un angle où 0° = nord/haut : on ajoute donc 180° pour aligner
+      // la pointe du triangle sur la direction réelle départ -> arrivée.
+      const angleDeg = Math.atan2(rTo.lon - rFrom.lon, rTo.lat - rFrom.lat) * 180 / Math.PI + 180;
+
+      let entry = condLayerCache.get(c.id);
+
+      if (!entry) {
+        const line = L.polyline([[rFrom.lat, rFrom.lon], [rTo.lat, rTo.lon]], {
+          color: condColor, weight: 4, interactive: false
+        }).addTo(fullMapLineLayer);
+
+        // Zone tactile invisible mais bien plus large (20px) que le trait visuel (4px) :
+        // un trait aussi fin est très difficile à viser précisément au doigt sur mobile.
+        // On force ce tracé-là en rendu SVG (malgré preferCanvas sur la carte) car notre
+        // détection de pression longue a besoin d'un élément DOM réel (_path) : un rendu
+        // Canvas ne crée pas d'élément DOM individuel par forme.
+        const touchTarget = L.polyline([[rFrom.lat, rFrom.lon], [rTo.lat, rTo.lon]], {
+          color: '#000000', opacity: 0, weight: 20, renderer: fullMapSvgRenderer
+        }).addTo(fullMapLineLayer);
+
+        // Flèche de sens d'écoulement + étiquette de nom combinées en un seul élément
+        // DOM (au lieu de deux calques séparés), pour la même raison de performance
+        // que pour les regards : moins d'éléments à repositionner pendant le glissement.
+        const marker = L.marker([midLat, midLon], {
+          icon: buildCollecteurIcon(condColor, c.name, angleDeg),
+          interactive: false
+        }).addTo(fullMapLineLayer);
+        applyFlowArrowRotation(marker, angleDeg);
+
+        // bindLongPress n'est appelée qu'ICI, une seule fois par collecteur pour toute
+        // la durée de vie de la carte (sauf suppression).
+        bindLongPress(touchTarget, () => openEditCollecteurModal(c.id));
+
+        entry = {
+          line, touchTarget, marker,
+          lastFromLat: rFrom.lat, lastFromLon: rFrom.lon, lastToLat: rTo.lat, lastToLon: rTo.lon,
+          lastColor: condColor, lastName: c.name, lastAngle: angleDeg
+        };
+        condLayerCache.set(c.id, entry);
+      } else {
+        const positionChanged = entry.lastFromLat !== rFrom.lat || entry.lastFromLon !== rFrom.lon ||
+          entry.lastToLat !== rTo.lat || entry.lastToLon !== rTo.lon;
+        if (positionChanged) {
+          const latlngs = [[rFrom.lat, rFrom.lon], [rTo.lat, rTo.lon]];
+          entry.line.setLatLngs(latlngs);
+          entry.touchTarget.setLatLngs(latlngs);
+          entry.marker.setLatLng([midLat, midLon]);
+          entry.lastFromLat = rFrom.lat; entry.lastFromLon = rFrom.lon;
+          entry.lastToLat = rTo.lat; entry.lastToLon = rTo.lon;
+        }
+        const angleChanged = entry.lastAngle !== angleDeg;
+        if (entry.lastColor !== condColor || angleChanged) {
+          entry.line.setStyle({ color: condColor });
+          entry.lastColor = condColor;
+          entry.lastAngle = angleDeg;
+          entry.marker.setIcon(buildCollecteurIcon(condColor, c.name, angleDeg));
+          applyFlowArrowRotation(entry.marker, angleDeg);
+        } else if (entry.lastName !== c.name) {
+          entry.marker.setIcon(buildCollecteurIcon(condColor, c.name, angleDeg));
+          applyFlowArrowRotation(entry.marker, angleDeg);
+        }
+        entry.lastName = c.name;
+      }
+    });
+
+    // Supprime les calques des collecteurs qui n'existent plus.
+    for (const [id, entry] of condLayerCache) {
+      if (!seenCondIds.has(id)) {
+        fullMapLineLayer.removeLayer(entry.line);
+        fullMapLineLayer.removeLayer(entry.touchTarget);
+        fullMapLineLayer.removeLayer(entry.marker);
+        condLayerCache.delete(id);
+      }
+    }
+
+    // On ne recadre/dézoome la vue qu'une seule fois (premier affichage), jamais pendant
+    // le dessin d'un collecteur (sélection R1 puis R2) ni à chaque ajout de point ultérieur :
+    // cela évite que la carte ne "saute" en arrière à chaque clic.
+    if (bounds.length && !fullMapHasFitOnce && !pendingNewRegardLatLng && !drawMode) {
+      fullMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 19 });
+      fullMapHasFitOnce = true;
+    }
+
+    const countEl = document.getElementById('fullMapCount');
+    if (countEl) {
+      countEl.textContent = regards.length + ' regard' + (regards.length === 1 ? '' : 's') +
+        ' · ' + conduites.length + ' collecteur' + (conduites.length === 1 ? '' : 's');
+    }
+  }
+
+  // ----- Storage (persiste dans cette conversation Claude ; ignoré gracieusement ailleurs) -----
+  // window.storage n'existe que dans l'aperçu Claude Artifacts : il ne fonctionne pas
+  // une fois le site déployé sur GitHub Pages / dans l'app WebView. localStorage est
+  // donc la mémorisation principale partout ailleurs (elle persiste bien entre les
+  // ouvertures de l'app). On essaie aussi window.storage en complément quand il existe,
+  // sans jamais en dépendre.
+  function localSave(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) { console.warn('localStorage indisponible', e); }
+  }
+  function localLoad(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+
+  async function saveData() {
+    const json = JSON.stringify({ regards, conduites });
+    localSave(STORAGE_KEY, json);
+    if (hasStorage) {
+      try { await window.storage.set(STORAGE_KEY, json, false); }
+      catch (e) { console.warn('Erreur de sauvegarde window.storage (ignorée)', e); }
+    }
+  }
+
+  async function loadData() {
+    let raw = localLoad(STORAGE_KEY);
+    if (!raw && hasStorage) {
+      try {
+        const result = await window.storage.get(STORAGE_KEY, false);
+        if (result && result.value) raw = result.value;
+      } catch (e) { /* clé absente : normal au premier lancement */ }
+    }
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        regards = parsed.regards || [];
+        conduites = parsed.conduites || [];
+        return;
+      } catch (e) { /* données corrompues : on repart à vide */ }
+    }
+    regards = [];
+    conduites = [];
+  }
+
+  function setPosStatus(msg, kind) {
+    const el = document.getElementById('posStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-msg' + (kind === 'ok' ? ' status-ok' : kind === 'err' ? ' status-err' : '');
+  }
+
+  // ----- Géolocalisation : centre simplement la carte sur la position actuelle -----
+  // getCurrentPosition() avec une seule lecture renvoie souvent la position du
+  // réseau mobile (précision de plusieurs centaines de mètres) avant que le GPS
+  // satellite n'ait eu le temps de s'affiner. On utilise donc watchPosition()
+  // pendant quelques secondes et on garde la meilleure précision obtenue.
+  let gpsWatchId = null;
+  let gpsWatchTimeoutId = null;
+  const GPS_WATCH_DURATION_MS = 12000;
+  const GPS_GOOD_ENOUGH_ACCURACY_M = 15; // arrête la recherche plus tôt si déjà très précis
+
+  function geoErrorHint(err) {
+    if (err.code === 1) return 'Autorisation de localisation refusée ou indisponible.';
+    if (err.code === 3) return 'Délai de localisation dépassé. Réessayez à l\'extérieur si possible.';
+    return 'Localisation indisponible (' + err.message + ').';
+  }
+
+  function stopGpsWatch() {
+    if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
+    if (gpsWatchTimeoutId !== null) { clearTimeout(gpsWatchTimeoutId); gpsWatchTimeoutId = null; }
+  }
+
+  function refreshPosition() {
+    if (!navigator.geolocation) {
+      setPosStatus('La géolocalisation n\'est pas disponible sur cet appareil/navigateur.', 'err');
+      return;
+    }
+    stopGpsWatch();
+    let bestFix = null;
+    setPosStatus('Recherche GPS en cours…', '');
+
+    gpsWatchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        if (!bestFix || accuracy < bestFix.accuracy) {
+          bestFix = { latitude, longitude, accuracy };
+          map.setView([latitude, longitude], 18);
+          setPosStatus('Précision actuelle : ' + Math.round(accuracy) + ' m — recherche d\'une meilleure précision…', '');
+        }
+        if (accuracy <= GPS_GOOD_ENOUGH_ACCURACY_M) finishGpsWatch(bestFix);
+      },
+      (err) => { if (!bestFix) setPosStatus(geoErrorHint(err), 'err'); },
+      { enableHighAccuracy: true, timeout: GPS_WATCH_DURATION_MS, maximumAge: 0 }
+    );
+
+    gpsWatchTimeoutId = setTimeout(() => finishGpsWatch(bestFix), GPS_WATCH_DURATION_MS);
+
+    function finishGpsWatch(fix) {
+      stopGpsWatch();
+      if (fix) {
+        setPosStatus('Position trouvée (précision ' + Math.round(fix.accuracy) + ' m). Ouvrez la carte complète pour pointer le regard.', 'ok');
+      } else {
+        setPosStatus('Position introuvable. Vérifiez que la localisation est activée et autorisée pour cette application.', 'err');
+      }
+    }
+  }
+
+  // ----- "Ma position" sur la carte plein écran : suivi GPS continu, comme Google Earth/Maps -----
+  // Contrairement à refreshPosition() (une recherche limitée dans le temps puis arrêt),
+  // ce mode reste actif en continu : le point bleu se déplace et s'affine sans jamais
+  // s'arrêter tout seul, jusqu'à ce qu'on désactive le suivi. C'est ce qui permet
+  // d'obtenir avec le temps une précision bien meilleure que 200 m, le GPS satellite
+  // ayant le temps de converger au lieu d'être coupé après une seule lecture.
+  let myLocationWatchId = null;
+  let myLocationMarker = null;
+  let myLocationHasCentered = false;
+
+  function toggleMyLocationTracking() {
+    if (myLocationWatchId !== null) {
+      stopMyLocationTracking();
+      return;
+    }
+    if (!navigator.geolocation) {
+      setPosStatus('La géolocalisation n\'est pas disponible sur cet appareil/navigateur.', 'err');
+      return;
+    }
+    const btn = document.getElementById('myLocationBtn');
+    if (btn) btn.classList.add('tracking');
+    myLocationHasCentered = false;
+
+    myLocationWatchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        // La toute première réponse de watchPosition() arrive juste après que
+        // l'utilisateur a répondu à l'invite native d'autorisation GPS — invite qui,
+        // comme confirm()/alert(), fait quitter le plein écran à Chrome
+        // automatiquement. On retente donc le plein écran ici : à ce stade on est
+        // toujours dans la continuité du geste utilisateur (le tap sur 📍), donc
+        // Chrome accepte la demande sans la refuser pour absence de geste direct.
+        reassertFullscreenIfNeeded();
+        const { latitude, longitude, accuracy } = pos.coords;
+        updateMyLocationMarker(latitude, longitude, accuracy);
+        // Comme Google Earth : on centre automatiquement la carte sur la première
+        // position reçue, puis on laisse l'utilisateur naviguer librement ensuite
+        // (on ne force plus le recentrage à chaque mise à jour, pour ne pas gêner
+        // une carte qu'il serait en train de consulter/dessiner ailleurs).
+        if (!myLocationHasCentered && fullMap) {
+          fullMap.setView([latitude, longitude], 19);
+          myLocationHasCentered = true;
+        }
+        setPosStatus('Position en direct — précision actuelle : ' + Math.round(accuracy) + ' m.', accuracy <= 30 ? 'ok' : '');
+      },
+      (err) => { reassertFullscreenIfNeeded(); setPosStatus(geoErrorHint(err), 'err'); },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 1000 }
+    );
+  }
+
+  // Repasse en plein écran natif si la carte complète est toujours ouverte mais que
+  // Chrome en est sorti tout seul (invite système GPS, confirm(), etc.). Inutile si
+  // on a déjà quitté la carte complète entre-temps (closeFullMap), ou si on y est
+  // déjà : requestFullscreen() ignore silencieusement un appel redondant.
+  function reassertFullscreenIfNeeded() {
+    const overlayOpen = document.getElementById('fullMapOverlay').classList.contains('open');
+    const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+    if (overlayOpen && !isFs) requestBrowserFullscreen();
+  }
+
+  function stopMyLocationTracking() {
+    if (myLocationWatchId !== null) { navigator.geolocation.clearWatch(myLocationWatchId); myLocationWatchId = null; }
+    const btn = document.getElementById('myLocationBtn');
+    if (btn) btn.classList.remove('tracking');
+    if (myLocationMarker) { fullMap.removeLayer(myLocationMarker); myLocationMarker = null; }
+  }
+
+  function updateMyLocationMarker(lat, lon, accuracy) {
+    if (!fullMap) return;
+    if (myLocationMarker) {
+      myLocationMarker.setLatLng([lat, lon]);
+    } else {
+      myLocationMarker = L.marker([lat, lon], {
+        icon: L.divIcon({
+          className: 'my-location-icon',
+          html: '<div class="my-location-pulse"></div><div class="my-location-dot"></div>',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        }),
+        interactive: false,
+        zIndexOffset: 1000
+      }).addTo(fullMap);
+    }
+  }
+
+  // ----- Couleur des regards : 5 couleurs au choix, affichées comme pastille sur la carte -----
+  const REGARD_COLORS = ['#c2790f', '#d62828', '#1d4ed8', '#2d6a4f', '#7c3aed'];
+  const DEFAULT_REGARD_COLOR = REGARD_COLORS[0];
+
+  // ----- Couleur des collecteurs : 5 couleurs au choix, appliquées au tracé du collecteur -----
+  const COND_COLORS = ['#2d6a4f', '#1d4ed8', '#d62828', '#c2790f', '#0891b2'];
+  const DEFAULT_COND_COLOR = COND_COLORS[0];
+
+  // ----- Lambert Maroc (Merchich) : paramètres officiels des 4 zones -----
+  // Ellipsoïde Clarke 1880 (IGN), datum Merchich, projection conique conforme de
+  // Lambert à 1 point (Lambert Conformal Conic 1SP), conforme aux définitions EPSG
+  // officielles utilisées par l'ANCFCC (zone III = EPSG:26194 "Sahara Nord" et non
+  // 26193 "Sahara" qui n'est pas l'une des 4 zones officielles). Vérifié par calcul
+  // indépendant (pyproj) : la projection Lambert elle-même est exacte au millimètre
+  // pour les 4 zones. +towgs84 donne le décalage Merchich -> WGS84 (transformation à
+  // 3 paramètres) : pour les zones 1 et 2, il correspond exactement à la base EPSG/PROJ
+  // officielle (écart nul) ; pour les zones 3 et 4 (Sahara), la base EPSG officielle
+  // utilise en interne un jeu de paramètres plus riche et non public, d'où un écart
+  // résiduel pouvant atteindre ~150-250m par rapport à cette transformation simplifiée.
+  // Largement suffisant pour repérer un regard sur le terrain, mais à ne jamais utiliser
+  // pour du bornage légal en zone Sahara — dans ce cas, rattachement GPS direct aux
+  // points géodésiques ANCFCC obligatoire.
+  const MERCHICH_ELLIPSOID = { a: 6378249.2, invF: 293.466021293627 };
+  const MERCHICH_TOWGS84 = { dx: 31, dy: 146, dz: 47 }; // mètres
+  const LAMBERT_ZONES = {
+    1: { label: 'Lambert Maroc — Zone 1 (Nord)',        lat0: 33.3, lon0: -5.4, k0: 0.999625769, x0: 500000,  y0: 300000 },
+    2: { label: 'Lambert Maroc — Zone 2 (Sud)',         lat0: 29.7, lon0: -5.4, k0: 0.999615596, x0: 500000,  y0: 300000 },
+    3: { label: 'Lambert Maroc — Zone 3 (Sahara Nord)', lat0: 26.1, lon0: -5.4, k0: 0.999616304, x0: 1200000, y0: 400000 },
+    4: { label: 'Lambert Maroc — Zone 4 (Sahara Sud)',  lat0: 22.5, lon0: -5.4, k0: 0.999616437, x0: 1500000, y0: 400000 }
+  };
+
+  // Convertit un point Lambert Maroc (X, Y en mètres, zone 1-4) vers WGS84 (lat/lon
+  // en degrés décimaux), en 2 étapes : (1) projection inverse de Lambert conique
+  // conforme -> lat/lon sur l'ellipsoïde Merchich (Clarke 1880 IGN), par la méthode
+  // itérative standard (IGN / EPSG guidance note 7-2, méthode Lambert 1SP inverse) ;
+  // (2) transformation à 3 paramètres (translation) Merchich -> WGS84.
+  function lambertMarocToWGS84(x, y, zoneNum) {
+    const zone = LAMBERT_ZONES[zoneNum];
+    if (!zone) return null;
+    const a = MERCHICH_ELLIPSOID.a;
+    const f = 1 / MERCHICH_ELLIPSOID.invF;
+    const e = Math.sqrt(2 * f - f * f); // première excentricité de l'ellipsoïde
+    const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+    const lat0 = toRad(zone.lat0), lon0 = toRad(zone.lon0);
+
+    // Lambert 1SP (EPSG 9801) : n = sin(lat0), et calcul de R0 (rayon à l'origine) à
+    // partir du point isométrique de latitude, tous deux nécessaires pour l'inverse.
+    const n = Math.sin(lat0);
+    const m0 = Math.cos(lat0) / Math.sqrt(1 - e * e * Math.sin(lat0) * Math.sin(lat0));
+    const t0 = Math.tan(Math.PI / 4 - lat0 / 2) / Math.pow((1 - e * Math.sin(lat0)) / (1 + e * Math.sin(lat0)), e / 2);
+    const bigF = m0 / (n * Math.pow(t0, n));
+    const r0 = a * zone.k0 * bigF * Math.pow(t0, n);
+
+    const dx = x - zone.x0, dy = y - zone.y0;
+    const r = Math.sign(n) * Math.sqrt(dx * dx + (r0 - dy) * (r0 - dy));
+    const theta = Math.atan2(dx, r0 - dy);
+    const t = Math.pow(r / (a * zone.k0 * bigF), 1 / n);
+
+    // Latitude par itération (converge en 4-5 passes pour cette excentricité) :
+    // méthode standard de la note technique EPSG pour Lambert Conformal Conic 1SP inverse.
+    let lat = Math.PI / 2 - 2 * Math.atan(t);
+    for (let i = 0; i < 6; i++) {
+      const esinlat = e * Math.sin(lat);
+      lat = Math.PI / 2 - 2 * Math.atan(t * Math.pow((1 - esinlat) / (1 + esinlat), e / 2));
+    }
+    const lon = theta / n + lon0;
+
+    return merchichToWGS84(toDeg(lat), toDeg(lon));
+  }
+
+  // Convertit un point WGS84 (lat/lon) vers Lambert Maroc (X, Y en mètres) pour une
+  // zone donnée : transformation inverse de Merchich vers WGS84 ci-dessus, puis
+  // projection directe de Lambert conique conforme (EPSG 9801, méthode directe).
+  function wgs84ToLambertMaroc(lat, lon, zoneNum) {
+    const zone = LAMBERT_ZONES[zoneNum];
+    if (!zone) return null;
+    const merch = wgs84ToMerchich(lat, lon);
+    const a = MERCHICH_ELLIPSOID.a;
+    const f = 1 / MERCHICH_ELLIPSOID.invF;
+    const e = Math.sqrt(2 * f - f * f);
+    const toRad = d => d * Math.PI / 180;
+    const lat0 = toRad(zone.lat0), lon0 = toRad(zone.lon0);
+    const latR = toRad(merch.lat), lonR = toRad(merch.lon);
+
+    const n = Math.sin(lat0);
+    const m0 = Math.cos(lat0) / Math.sqrt(1 - e * e * Math.sin(lat0) * Math.sin(lat0));
+    const t0 = Math.tan(Math.PI / 4 - lat0 / 2) / Math.pow((1 - e * Math.sin(lat0)) / (1 + e * Math.sin(lat0)), e / 2);
+    const bigF = m0 / (n * Math.pow(t0, n));
+    const r0 = a * zone.k0 * bigF * Math.pow(t0, n);
+
+    const t = Math.tan(Math.PI / 4 - latR / 2) / Math.pow((1 - e * Math.sin(latR)) / (1 + e * Math.sin(latR)), e / 2);
+    const r = a * zone.k0 * bigF * Math.pow(t, n);
+    const theta = n * (lonR - lon0);
+
+    const x = zone.x0 + r * Math.sin(theta);
+    const y = zone.y0 + r0 - r * Math.cos(theta);
+    return { x, y };
+  }
+
+  // Transformation géodésique à 3 paramètres (translation), méthode de Molodensky
+  // abrégée, suffisante pour la précision recherchée ici (positionnement de terrain,
+  // pas du bornage légal). Merchich -> WGS84 : on ajoute le décalage.
+  function merchichToWGS84(latDeg, lonDeg) {
+    const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+    const a1 = MERCHICH_ELLIPSOID.a, f1 = 1 / MERCHICH_ELLIPSOID.invF;
+    const a2 = 6378137.0, f2 = 1 / 298.257223563; // WGS84
+    const lat = toRad(latDeg), lon = toRad(lonDeg);
+    const e2 = 2 * f1 - f1 * f1;
+    const nu = a1 / Math.sqrt(1 - e2 * Math.sin(lat) * Math.sin(lat));
+    const h = 0; // altitude ellipsoïdale supposée nulle (non gérée par cet outil)
+    const X = (nu + h) * Math.cos(lat) * Math.cos(lon);
+    const Y = (nu + h) * Math.cos(lat) * Math.sin(lon);
+    const Z = (nu * (1 - e2) + h) * Math.sin(lat);
+
+    const X2 = X + MERCHICH_TOWGS84.dx, Y2 = Y + MERCHICH_TOWGS84.dy, Z2 = Z + MERCHICH_TOWGS84.dz;
+
+    const b2 = a2 * (1 - f2), e2b = 2 * f2 - f2 * f2;
+    const p = Math.sqrt(X2 * X2 + Y2 * Y2);
+    let lat2 = Math.atan2(Z2, p * (1 - e2b));
+    for (let i = 0; i < 6; i++) {
+      const nu2 = a2 / Math.sqrt(1 - e2b * Math.sin(lat2) * Math.sin(lat2));
+      lat2 = Math.atan2(Z2 + e2b * nu2 * Math.sin(lat2), p);
+    }
+    const lon2 = Math.atan2(Y2, X2);
+    return { lat: toDeg(lat2), lon: toDeg(lon2) };
+  }
+
+  // WGS84 -> Merchich : on retranche le même décalage (sens inverse de la fonction
+  // ci-dessus), cohérent avec la transformation à 3 paramètres utilisée dans tout cet outil.
+  function wgs84ToMerchich(latDeg, lonDeg) {
+    const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+    const a2 = 6378137.0, f2 = 1 / 298.257223563;
+    const lat = toRad(latDeg), lon = toRad(lonDeg);
+    const e2b = 2 * f2 - f2 * f2;
+    const nu2 = a2 / Math.sqrt(1 - e2b * Math.sin(lat) * Math.sin(lat));
+    const h = 0;
+    const X2 = (nu2 + h) * Math.cos(lat) * Math.cos(lon);
+    const Y2 = (nu2 + h) * Math.cos(lat) * Math.sin(lon);
+    const Z2 = (nu2 * (1 - e2b) + h) * Math.sin(lat);
+
+    const X = X2 - MERCHICH_TOWGS84.dx, Y = Y2 - MERCHICH_TOWGS84.dy, Z = Z2 - MERCHICH_TOWGS84.dz;
+
+    const a1 = MERCHICH_ELLIPSOID.a, f1 = 1 / MERCHICH_ELLIPSOID.invF;
+    const e1 = 2 * f1 - f1 * f1;
+    const p = Math.sqrt(X * X + Y * Y);
+    let lat1 = Math.atan2(Z, p * (1 - e1));
+    for (let i = 0; i < 6; i++) {
+      const nu1 = a1 / Math.sqrt(1 - e1 * Math.sin(lat1) * Math.sin(lat1));
+      lat1 = Math.atan2(Z + e1 * nu1 * Math.sin(lat1), p);
+    }
+    const lon1 = Math.atan2(Y, X);
+    return { lat: toDeg(lat1), lon: toDeg(lon1) };
+  }
+
+  function buildColorPicker(containerId, selectedColor, onSelect, palette) {
+    const el = document.getElementById(containerId);
+    const colors = palette || REGARD_COLORS;
+    el.innerHTML = '';
+    colors.forEach(color => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'color-swatch' + (color === selectedColor ? ' selected' : '');
+      btn.style.background = color;
+      btn.dataset.color = color;
+      btn.onclick = () => {
+        el.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+        btn.classList.add('selected');
+        onSelect(color);
+      };
+      el.appendChild(btn);
+    });
+  }
+
+  // ----- Aller à des coordonnées précises (bloc hors carte, page principale) -----
+  // Convertit ce qui est saisi (WGS84 ou Lambert Maroc zone 1-4) vers WGS84, ouvre la
+  // carte complète centrée exactement à cet endroit, puis déclenche directement la
+  // fiche "Nouveau regard" comme si l'utilisateur avait touché ce point précis sur la
+  // carte — même flux que le tap manuel, pour ne pas dupliquer la logique d'ajout.
+  function onCoordSystemChange() {
+    const system = document.getElementById('coordSystemSelect').value;
+    const labelX = document.getElementById('coordLabelX');
+    const labelY = document.getElementById('coordLabelY');
+    const inputX = document.getElementById('coordInputX');
+    const inputY = document.getElementById('coordInputY');
+    if (system === 'wgs84') {
+      labelX.textContent = 'Latitude';
+      labelY.textContent = 'Longitude';
+      inputX.placeholder = 'ex: 33.5731';
+      inputY.placeholder = 'ex: -7.5898';
+    } else {
+      labelX.textContent = 'X (Est)';
+      labelY.textContent = 'Y (Nord)';
+      inputX.placeholder = 'ex: 296628.46';
+      inputY.placeholder = 'ex: 332701.68';
+    }
+    setCoordEntryStatus('', null);
+  }
+
+  function setCoordEntryStatus(msg, kind) {
+    const el = document.getElementById('coordEntryStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-msg' + (kind === 'ok' ? ' status-ok' : kind === 'err' ? ' status-err' : '');
+  }
+
+  function goToTypedCoordinates() {
+    const system = document.getElementById('coordSystemSelect').value;
+    const rawX = document.getElementById('coordInputX').value.trim().replace(',', '.');
+    const rawY = document.getElementById('coordInputY').value.trim().replace(',', '.');
+    const x = parseFloat(rawX), y = parseFloat(rawY);
+
+    if (!rawX || !rawY || isNaN(x) || isNaN(y)) {
+      setCoordEntryStatus('Indiquez deux valeurs numériques valides.', 'err');
+      return;
+    }
+
+    let lat, lon;
+    if (system === 'wgs84') {
+      lat = x; lon = y;
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        setCoordEntryStatus('Latitude/longitude hors limites (latitude entre -90 et 90, longitude entre -180 et 180).', 'err');
+        return;
+      }
+    } else {
+      const zoneNum = parseInt(system.replace('lambert', ''), 10);
+      const result = lambertMarocToWGS84(x, y, zoneNum);
+      if (!result) { setCoordEntryStatus('Zone Lambert invalide.', 'err'); return; }
+      lat = result.lat; lon = result.lon;
+    }
+
+    // Garde-fou : si le résultat tombe très loin du Maroc, l'utilisateur s'est
+    // probablement trompé de système ou de zone (erreur la plus fréquente en pratique).
+    if (lat < 20 || lat > 37 || lon < -18 || lon > 0) {
+      setCoordEntryStatus('Attention : ce point tombe en dehors du Maroc. Vérifiez le système de coordonnées choisi et la zone Lambert (si applicable).', 'err');
+      return;
+    }
+
+    setCoordEntryStatus('Position trouvée : ' + lat.toFixed(6) + ', ' + lon.toFixed(6) + '. Ouverture de la carte…', 'ok');
+    openFullMap();
+    // openFullMap() peut créer la carte de façon asynchrone (première ouverture) ; on
+    // attend qu'elle soit prête avant de la recentrer et d'ouvrir la fiche "Nouveau regard".
+    const waitForMap = setInterval(() => {
+      if (fullMap) {
+        clearInterval(waitForMap);
+        fullMap.setView([lat, lon], 19);
+        openRegardModalForNewPoint(lat, lon);
+      }
+    }, 60);
+  }
+
+  // ----- Regards : nouveau point (un tap sur la carte complète) -----
+  let pendingNewRegardColor = DEFAULT_REGARD_COLOR;
+
+  function openRegardModalForNewPoint(lat, lon) {
+    pendingNewRegardLatLng = { lat, lon };
+    pendingNewRegardColor = DEFAULT_REGARD_COLOR;
+    document.getElementById('modalRegardName').value = nextRegardSuggestion();
+    document.getElementById('modalRegardEtat').value = '';
+    buildColorPicker('modalRegardColorPicker', pendingNewRegardColor, (c) => { pendingNewRegardColor = c; });
+    document.getElementById('regardModal').classList.add('open');
+    setTimeout(() => document.getElementById('modalRegardName').focus(), 100);
+  }
+
+  function nextRegardSuggestion() {
+    return 'R' + (regards.length + 1);
+  }
+
+  function closeRegardModal() {
+    document.getElementById('regardModal').classList.remove('open');
+    pendingNewRegardLatLng = null;
+  }
+
+  async function confirmAddRegard() {
+    const name = document.getElementById('modalRegardName').value.trim();
+    if (!name) { alert('Indiquez un n° de regard.'); return; }
+    if (!pendingNewRegardLatLng) { closeRegardModal(); return; }
+
+    regards.push({
+      id: 'R' + Date.now(),
+      name,
+      etat: document.getElementById('modalRegardEtat').value.trim(),
+      color: pendingNewRegardColor,
+      lat: pendingNewRegardLatLng.lat,
+      lon: pendingNewRegardLatLng.lon,
+      timestamp: new Date().toISOString()
+    });
+    await saveData();
+    closeRegardModal();
+    renderAll();
+  }
+
+  // ----- Regards : modification / suppression (appui long sur la carte complète) -----
+  let editingRegardColor = DEFAULT_REGARD_COLOR;
+
+  function openEditRegardModal(id) {
+    const r = regards.find(x => x.id === id);
+    if (!r) return;
+    editingRegardId = id;
+    editingRegardColor = r.color || DEFAULT_REGARD_COLOR;
+    document.getElementById('editRegardName').value = r.name;
+    document.getElementById('editRegardEtat').value = r.etat || '';
+    document.getElementById('editRegardLatVal').textContent = r.lat.toFixed(6);
+    document.getElementById('editRegardLonVal').textContent = r.lon.toFixed(6);
+    setCopyCoordsStatus('', null);
+    buildColorPicker('editRegardColorPicker', editingRegardColor, (c) => { editingRegardColor = c; });
+    document.getElementById('editRegardModal').classList.add('open');
+  }
+
+  function closeEditRegardModal() {
+    document.getElementById('editRegardModal').classList.remove('open');
+    editingRegardId = null;
+  }
+
+  // Copie "latitude, longitude" (degrés décimaux WGS84) dans le presse-papier, un
+  // format que Google Maps reconnaît directement quand on le colle dans sa barre de
+  // recherche. navigator.clipboard.writeText est la méthode moderne standard, mais elle
+  // est parfois indisponible ou silencieusement bloquée dans les WebViews d'app générées
+  // (même limitation déjà rencontrée pour le téléchargement de fichiers, voir
+  // downloadFile plus bas) : on retombe alors sur document.execCommand('copy'), plus
+  // ancien mais bien plus largement supporté dans ces contextes.
+  async function copyEditingRegardCoordinates() {
+    const r = regards.find(x => x.id === editingRegardId);
+    if (!r) return;
+    const text = r.lat.toFixed(6) + ', ' + r.lon.toFixed(6);
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopyCoordsStatus('Coordonnées copiées : ' + text + ' (collez-les dans Google Maps pour retrouver ce point exact).', 'ok');
+        return;
+      } catch (e) {
+        console.warn('navigator.clipboard indisponible, repli sur execCommand', e);
+      }
+    }
+
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        setCopyCoordsStatus('Coordonnées copiées : ' + text + ' (collez-les dans Google Maps pour retrouver ce point exact).', 'ok');
+      } else {
+        setCopyCoordsStatus('Copie automatique impossible ici. Coordonnées : ' + text + ' (sélectionnez et copiez ce texte manuellement).', 'err');
+      }
+    } catch (e) {
+      console.error('Copie dans le presse-papier impossible', e);
+      setCopyCoordsStatus('Copie automatique impossible ici. Coordonnées : ' + text + ' (sélectionnez et copiez ce texte manuellement).', 'err');
+    }
+  }
+
+  function setCopyCoordsStatus(msg, kind) {
+    const el = document.getElementById('copyCoordsStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-msg' + (kind === 'ok' ? ' status-ok' : kind === 'err' ? ' status-err' : '');
+  }
+
+  async function confirmEditRegard() {
+    const r = regards.find(x => x.id === editingRegardId);
+    if (!r) { closeEditRegardModal(); return; }
+    const name = document.getElementById('editRegardName').value.trim();
+    if (!name) { alert('Indiquez un n° de regard.'); return; }
+    r.name = name;
+    r.etat = document.getElementById('editRegardEtat').value.trim();
+    r.color = editingRegardColor;
+    await saveData();
+    closeEditRegardModal();
+    renderAll();
+  }
+
+  // ----- Regards : déplacer un point existant -----
+  // On ne permet jamais de glisser librement un regard avec la souris/le doigt (trop
+  // imprécis et source d'erreurs) : on ferme la fiche, on affiche un message clair, et
+  // le PROCHAIN tap sur la carte déplace ce regard précis à cet endroit exact.
+  function startMoveRegard() {
+    if (!editingRegardId) return;
+    // On garde editingRegardId en mémoire pour confirmMoveRegard(), donc on ferme
+    // seulement l'affichage de la fiche sans réinitialiser cet id (contrairement à
+    // closeEditRegardModal, utilisée partout ailleurs).
+    document.getElementById('editRegardModal').classList.remove('open');
+    moveRegardMode = true;
+    setDrawHint('Touchez l\'emplacement exact où déplacer ce regard sur la carte.');
+  }
+
+  async function confirmMoveRegard(lat, lon) {
+    const r = regards.find(x => x.id === editingRegardId);
+    moveRegardMode = false;
+    setDrawHint('');
+    editingRegardId = null;
+    if (!r) return;
+    r.lat = lat;
+    r.lon = lon;
+    await saveData();
+    renderAll();
+  }
+
+  async function confirmDeleteRegardFromEdit() {
+    const id = editingRegardId;
+    if (!id) return;
+    const usedIn = conduites.filter(c => c.from === id || c.to === id);
+    let msg = 'Supprimer ce regard ?';
+    if (usedIn.length > 0) msg += ' ' + usedIn.length + ' collecteur(s) lié(s) seront aussi supprimés.';
+    if (!await customConfirm(msg, 'Supprimer')) return;
+    regards = regards.filter(r => r.id !== id);
+    conduites = conduites.filter(c => c.from !== id && c.to !== id);
+    await saveData();
+    closeEditRegardModal();
+    renderAll();
+  }
+
+  // ----- Collecteurs : nouveau (après sélection de R1 puis R2 en mode dessin) -----
+  function openCollecteurModal(fromId, toId) {
+    const rFrom = regards.find(r => r.id === fromId);
+    const rTo = regards.find(r => r.id === toId);
+    pendingCollecteurFromTo = { from: fromId, to: toId };
+    pendingNewCondColor = DEFAULT_COND_COLOR;
+    document.getElementById('collecteurModalSummary').textContent =
+      'Sens d\'écoulement : ' + (rFrom ? rFrom.name : '?') + ' → ' + (rTo ? rTo.name : '?');
+    document.getElementById('modalCondName').value = nextCollecteurSuggestion();
+    document.getElementById('modalCondDiameter').value = '300';
+    buildColorPicker('modalCondColorPicker', pendingNewCondColor, (c) => { pendingNewCondColor = c; }, COND_COLORS);
+    document.getElementById('collecteurModal').classList.add('open');
+    setTimeout(() => document.getElementById('modalCondName').focus(), 100);
+  }
+
+  function nextCollecteurSuggestion() {
+    return 'C' + (conduites.length + 1);
+  }
+
+  let pendingCollecteurFromTo = null;
+  let pendingNewCondColor = DEFAULT_COND_COLOR;
+  let editingCondColor = DEFAULT_COND_COLOR;
+
+  function closeCollecteurModal() {
+    document.getElementById('collecteurModal').classList.remove('open');
+    pendingCollecteurFromTo = null;
+    exitDrawMode();
+  }
+
+  async function confirmAddCollecteur() {
+    const name = document.getElementById('modalCondName').value.trim();
+    if (!name) { alert('Indiquez un n° de collecteur.'); return; }
+    if (!pendingCollecteurFromTo) { closeCollecteurModal(); return; }
+
+    conduites.push({
+      id: 'C' + Date.now(),
+      name,
+      from: pendingCollecteurFromTo.from,
+      to: pendingCollecteurFromTo.to,
+      diameter: document.getElementById('modalCondDiameter').value,
+      color: pendingNewCondColor,
+      timestamp: new Date().toISOString()
+    });
+    await saveData();
+    closeCollecteurModal();
+    renderAll();
+  }
+
+  // ----- Collecteurs : modification / suppression (appui long sur la carte complète) -----
+  // Le tracé d'un collecteur reste toujours ancré entre deux regards existants : on ne
+  // permet jamais de le déplacer "dans le vide". Modifier un collecteur revient donc à
+  // choisir, dans deux listes déroulantes, quels regards (déjà placés) sont son départ
+  // et son arrivée — jamais à faire glisser une ligne librement sur la carte.
+  function populateCollecteurRegardSelects(selectedFromId, selectedToId) {
+    const fromSel = document.getElementById('editCondFrom');
+    const toSel = document.getElementById('editCondTo');
+    const optionsHtml = regards.map(r => `<option value="${r.id}">${escapeHTML(r.name)}</option>`).join('');
+    fromSel.innerHTML = optionsHtml;
+    toSel.innerHTML = optionsHtml;
+    if (selectedFromId) fromSel.value = selectedFromId;
+    if (selectedToId) toSel.value = selectedToId;
+  }
+
+  function openEditCollecteurModal(id) {
+    const c = conduites.find(x => x.id === id);
+    if (!c) return;
+    editingCollecteurId = id;
+    editingCondColor = c.color || DEFAULT_COND_COLOR;
+    document.getElementById('editCondName').value = c.name;
+    document.getElementById('editCondDiameter').value = c.diameter || '300';
+    populateCollecteurRegardSelects(c.from, c.to);
+    buildColorPicker('editCondColorPicker', editingCondColor, (col) => { editingCondColor = col; }, COND_COLORS);
+    document.getElementById('editCollecteurModal').classList.add('open');
+  }
+
+  function closeEditCollecteurModal() {
+    document.getElementById('editCollecteurModal').classList.remove('open');
+    editingCollecteurId = null;
+  }
+
+  async function confirmEditCollecteur() {
+    const c = conduites.find(x => x.id === editingCollecteurId);
+    if (!c) { closeEditCollecteurModal(); return; }
+    const name = document.getElementById('editCondName').value.trim();
+    if (!name) { alert('Indiquez un n° de collecteur.'); return; }
+    const fromId = document.getElementById('editCondFrom').value;
+    const toId = document.getElementById('editCondTo').value;
+    if (!fromId || !toId) { alert('Choisissez un regard de départ et un regard d\'arrivée.'); return; }
+    if (fromId === toId) { alert('Le départ et l\'arrivée doivent être deux regards différents.'); return; }
+    c.name = name;
+    c.diameter = document.getElementById('editCondDiameter').value;
+    c.color = editingCondColor;
+    c.from = fromId;
+    c.to = toId;
+    await saveData();
+    closeEditCollecteurModal();
+    renderAll();
+  }
+
+  async function confirmDeleteCollecteurFromEdit() {
+    const id = editingCollecteurId;
+    if (!id) return;
+    if (!await customConfirm('Supprimer ce collecteur ?', 'Supprimer')) return;
+    conduites = conduites.filter(c => c.id !== id);
+    await saveData();
+    closeEditCollecteurModal();
+    renderAll();
+  }
+
+  // ----- Import KML : recharge des regards/collecteurs depuis un fichier .kml existant -----
+  function handleImportKmlFile(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = ''; // permet de re-choisir le même fichier une prochaine fois
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const result = parseKMLString(reader.result);
+        if (result.regards.length === 0 && result.conduites.length === 0) {
+          setImportStatus('Aucun regard ni collecteur reconnu dans ce fichier KML.', 'err');
+          return;
+        }
+        const merge = regards.length > 0 || conduites.length > 0
+          ? await customConfirm('Remplacer les données actuelles (' + regards.length + ' regard(s), ' + conduites.length + ' collecteur(s)) par celles du fichier importé ?\n\nAnnuler = fusionner à la place (ajouter sans supprimer l\'existant).', 'Remplacer')
+          : true;
+
+        if (merge) {
+          regards = result.regards;
+          conduites = result.conduites;
+        } else {
+          regards = regards.concat(result.regards);
+          conduites = conduites.concat(result.conduites);
+        }
+        await saveData();
+        renderAll();
+        setImportStatus('Import réussi : ' + result.regards.length + ' regard(s), ' + result.conduites.length + ' collecteur(s).', 'ok');
+      } catch (e) {
+        console.error('Erreur import KML', e);
+        setImportStatus('Fichier KML invalide ou illisible. Vérifiez qu\'il provient bien de cette application ou de Google Earth.', 'err');
+      }
+    };
+    reader.onerror = () => setImportStatus('Impossible de lire ce fichier.', 'err');
+    reader.readAsText(file);
+  }
+
+  function setImportStatus(msg, kind) {
+    const el = document.getElementById('importStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-msg' + (kind === 'ok' ? ' status-ok' : kind === 'err' ? ' status-err' : '');
+  }
+
+  // Lit un KML généré par cette application (structure Placemark Point/LineString avec
+  // <name> = n° de regard/collecteur, <description> contenant Etat:/Diametre:).
+  // Les regards sont d'abord tous recréés avec de nouveaux id, puis les collecteurs sont
+  // reliés par nom de regard (le nom du point de départ/arrivée du LineString le plus proche).
+  function parseKMLString(text) {
+    const xml = new DOMParser().parseFromString(text, 'text/xml');
+    if (xml.querySelector('parsererror')) throw new Error('xml-parse-error');
+
+    // Le dossier "Collecteurs" contient désormais, en plus du tracé (LineString),
+    // un point d'étiquette (nom + diamètre) et un point flèche (sens d'écoulement)
+    // pour chaque collecteur — nécessaires pour que ces infos survivent à un export
+    // vers Google Earth / AutoCAD (voir buildKMLString). Ce sont bien des Placemarks
+    // de type Point, donc sans cette restriction au dossier "Regards" ils seraient
+    // ré-importés à tort comme de faux regards supplémentaires.
+    const findFolder = name => Array.from(xml.getElementsByTagName('Folder'))
+      .find(f => (f.getElementsByTagName('name')[0]?.textContent || '').trim() === name);
+    const regardsFolder = findFolder('Regards');
+    const newRegards = [];
+    const placemarks = Array.from((regardsFolder || xml).getElementsByTagName('Placemark'));
+
+    placemarks.forEach(pm => {
+      const point = pm.getElementsByTagName('Point')[0];
+      if (!point) return;
+      const coordText = (point.getElementsByTagName('coordinates')[0]?.textContent || '').trim();
+      const [lonStr, latStr] = coordText.split(',');
+      const lat = parseFloat(latStr), lon = parseFloat(lonStr);
+      if (isNaN(lat) || isNaN(lon)) return;
+      const name = (pm.getElementsByTagName('name')[0]?.textContent || '').trim() || ('R' + (newRegards.length + 1));
+      const desc = pm.getElementsByTagName('description')[0]?.textContent || '';
+      const etatMatch = desc.match(/Etat\s*:\s*([^\n]*)/i);
+      newRegards.push({
+        id: 'R' + Date.now() + '_' + newRegards.length,
+        name,
+        etat: etatMatch ? etatMatch[1].trim() : '',
+        lat, lon,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    const newConduites = [];
+    const conduitesFolder = findFolder('Collecteurs');
+    const conduitePlacemarks = Array.from((conduitesFolder || xml).getElementsByTagName('Placemark'));
+    conduitePlacemarks.forEach(pm => {
+      const line = pm.getElementsByTagName('LineString')[0];
+      if (!line) return;
+      const coordText = (line.getElementsByTagName('coordinates')[0]?.textContent || '').trim();
+      const pts = coordText.split(/\s+/).map(p => p.split(',').map(Number));
+      if (pts.length < 2) return;
+      const [lon1, lat1] = pts[0];
+      const [lon2, lat2] = pts[pts.length - 1];
+
+      const findNearest = (lat, lon) => {
+        let best = null, bestDist = Infinity;
+        newRegards.forEach(r => {
+          const d = Math.hypot(r.lat - lat, r.lon - lon);
+          if (d < bestDist) { bestDist = d; best = r; }
+        });
+        return best;
+      };
+      const rFrom = findNearest(lat1, lon1);
+      const rTo = findNearest(lat2, lon2);
+      if (!rFrom || !rTo) return;
+
+      const name = (pm.getElementsByTagName('name')[0]?.textContent || '').trim() || ('C' + (newConduites.length + 1));
+      const desc = pm.getElementsByTagName('description')[0]?.textContent || '';
+      const diamMatch = desc.match(/Diametre\s*:\s*(\d+)/i);
+      newConduites.push({
+        id: 'C' + Date.now() + '_' + newConduites.length,
+        name,
+        from: rFrom.id, to: rTo.id,
+        diameter: diamMatch ? diamMatch[1] : '300',
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    return { regards: newRegards, conduites: newConduites };
+  }
+
+  // ----- Render -----
+  function renderAll() {
+    renderRegardList();
+    renderConduiteList();
+    renderMap();
+    if (fullMap) renderFullMap();
+  }
+
+  // ----- Listes Regards / Collecteurs repliables (façon panneau "Layers" GIS) -----
+  // Repliées par défaut pour ne pas avoir à descendre toute la liste pour atteindre
+  // l'export quand il y a beaucoup de points déjà saisis.
+  // Sections repliables de la page principale : chaque entrée associe un nom court à
+  // l'id de son conteneur .collapsible-list et à l'id de son bouton +/−. Passer par une
+  // table plutôt que des if/else séparés évite de dupliquer la logique à chaque nouvelle
+  // carte repliable (regard, collecteur, et maintenant coordEntry).
+  const LIST_SECTIONS = {
+    regard: { wrapId: 'regardListWrap', btnId: 'regardToggleBtn' },
+    cond: { wrapId: 'condListWrap', btnId: 'condToggleBtn' },
+    coordEntry: { wrapId: 'coordEntryWrap', btnId: 'coordEntryToggleBtn' }
+  };
+  const listSectionOpen = { regard: false, cond: false, coordEntry: false };
+
+  function toggleListSection(which) {
+    if (!(which in LIST_SECTIONS)) return;
+    listSectionOpen[which] = !listSectionOpen[which];
+    applyListSectionState(which, listSectionOpen[which]);
+  }
+
+  function applyListSectionState(which, isOpen) {
+    const section = LIST_SECTIONS[which];
+    if (!section) return;
+    const wrap = document.getElementById(section.wrapId);
+    const btn = document.getElementById(section.btnId);
+    if (wrap) wrap.classList.toggle('open', isOpen);
+    if (btn) btn.textContent = isOpen ? '\u2212' : '+';
+  }
+
+  function renderRegardList() {
+    const ul = document.getElementById('regardList');
+    document.getElementById('regardCount').textContent = regards.length;
+    document.getElementById('regardEmptyHint').style.display = regards.length ? 'none' : 'block';
+    applyListSectionState('regard', listSectionOpen.regard);
+    ul.innerHTML = '';
+    regards.forEach(r => {
+      const li = document.createElement('li');
+      li.innerHTML = `<div class="item-info">
+          <b><span class="dot" style="background:${r.color || DEFAULT_REGARD_COLOR}"></span>${escapeHTML(r.name)}</b>
+          <span class="meta">${escapeHTML(r.etat || 'état non renseigné')} \u00b7 ${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}</span>
+        </div>
+        <button class="btn-danger-text" onclick="quickDeleteRegard('${r.id}')" aria-label="Supprimer">\u2715</button>`;
+      ul.appendChild(li);
+    });
+  }
+
+  // ----- Sélection multiple de collecteurs (addition de longueur) -----
+  // État volontairement simple (Set d'ids) : pas besoin de survivre à un rechargement
+  // de page, contrairement à regards/conduites qui sont sauvegardés.
+  let condSelectMode = false;
+  let condSelectedIds = new Set();
+
+  // Appui long sur la liste des collecteurs (en dehors du mode sélection) : bascule le
+  // mode sélection, en plus du bouton Σ dédié dans l'en-tête de la carte. Contrairement
+  // à bindLongPress (conçue pour les calques Leaflet de la carte), ceci est un simple
+  // écouteur Pointer Events sur l'élément DOM <ul>, posé une seule fois au chargement.
+  function initCondListLongPress() {
+    const ul = document.getElementById('condList');
+    if (!ul) return;
+    const LONG_PRESS_MS_LIST = 480;
+    const MOVE_TOLERANCE_PX = 12;
+    let timer = null, startX = 0, startY = 0, firedLong = false;
+
+    ul.addEventListener('pointerdown', (e) => {
+      if (condSelectMode) return; // en mode sélection, chaque ligne gère déjà son propre tap
+      firedLong = false;
+      startX = e.clientX; startY = e.clientY;
+      timer = setTimeout(() => {
+        firedLong = true;
+        toggleCondSelectMode();
+      }, LONG_PRESS_MS_LIST);
+    });
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    ul.addEventListener('pointermove', (e) => {
+      if (!timer) return;
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) > MOVE_TOLERANCE_PX) cancel();
+    });
+    ul.addEventListener('pointerup', cancel);
+    ul.addEventListener('pointercancel', cancel);
+    ul.addEventListener('pointerleave', cancel);
+  }
+
+  function toggleCondSelectMode() {
+    condSelectMode = !condSelectMode;
+    if (!condSelectMode) condSelectedIds.clear();
+    else {
+      // Ouvre automatiquement la liste en entrant en mode sélection : sélectionner des
+      // collecteurs invisibles (liste repliée) serait déroutant.
+      listSectionOpen.cond = true;
+      applyListSectionState('cond', listSectionOpen.cond);
+    }
+    document.getElementById('condSelectModeBtn').classList.toggle('active-select', condSelectMode);
+    document.getElementById('condSelectHint').style.display = condSelectMode ? 'block' : 'none';
+    document.getElementById('condSelectSummary').style.display = condSelectMode ? 'flex' : 'none';
+    renderConduiteList();
+  }
+
+  function toggleCondSelected(id) {
+    if (condSelectedIds.has(id)) condSelectedIds.delete(id);
+    else condSelectedIds.add(id);
+    renderConduiteList();
+  }
+
+  function updateCondSelectSummary() {
+    const countLabel = document.getElementById('condSelectCountLabel');
+    const totalLabel = document.getElementById('condSelectTotalLabel');
+    if (!countLabel || !totalLabel) return;
+    const n = condSelectedIds.size;
+    countLabel.textContent = n + ' collecteur' + (n === 1 ? '' : 's') + ' sélectionné' + (n === 1 ? '' : 's');
+    let totalM = 0;
+    conduites.forEach(c => { if (condSelectedIds.has(c.id)) totalM += conduiteLength(c); });
+    totalLabel.textContent = totalM >= 1000
+      ? (totalM / 1000).toFixed(3) + ' km (' + totalM.toFixed(1) + ' m)'
+      : totalM.toFixed(1) + ' m';
+  }
+
+  function renderConduiteList() {
+    const ul = document.getElementById('condList');
+    document.getElementById('conduiteCount').textContent = conduites.length;
+    document.getElementById('condEmptyHint').style.display = conduites.length ? 'none' : 'block';
+    applyListSectionState('cond', listSectionOpen.cond);
+    // Retire de la sélection tout id de collecteur qui n'existe plus (supprimé depuis,
+    // ou son regard de départ/arrivée a été supprimé entretemps) : évite de compter un
+    // collecteur fantôme dans le total affiché.
+    if (condSelectedIds.size) {
+      const existingIds = new Set(conduites.map(c => c.id));
+      for (const id of condSelectedIds) if (!existingIds.has(id)) condSelectedIds.delete(id);
+    }
+    ul.className = 'item-list' + (condSelectMode ? ' select-mode' : '');
+    ul.innerHTML = '';
+    conduites.forEach(c => {
+      const rFrom = regards.find(r => r.id === c.from);
+      const rTo = regards.find(r => r.id === c.to);
+      const lengthM = conduiteLength(c);
+      const lengthLabel = rFrom && rTo ? ' \u00b7 ' + lengthM.toFixed(1) + ' m' : '';
+      const isSelected = condSelectedIds.has(c.id);
+      const li = document.createElement('li');
+      li.className = isSelected ? 'selected' : '';
+
+      if (condSelectMode) {
+        li.innerHTML = `<div class="item-info">
+            <b><span class="dash" style="background:${c.color || DEFAULT_COND_COLOR}"></span>${escapeHTML(c.name)}</b>
+            <span class="meta">${escapeHTML(rFrom ? rFrom.name : '?')} \u2192 ${escapeHTML(rTo ? rTo.name : '?')}${lengthLabel}</span>
+          </div>
+          <span class="cond-select-checkbox">${isSelected ? '\u2713' : ''}</span>`;
+        li.onclick = () => toggleCondSelected(c.id);
+      } else {
+        li.innerHTML = `<div class="item-info">
+            <b><span class="dash" style="background:${c.color || DEFAULT_COND_COLOR}"></span>${escapeHTML(c.name)}</b>
+            <span class="meta">${escapeHTML(rFrom ? rFrom.name : '?')} \u2192 ${escapeHTML(rTo ? rTo.name : '?')} (sens d'écoulement) \u00b7 \u00d8${escapeHTML(String(c.diameter || '300'))}mm${lengthLabel}</span>
+          </div>
+          <button class="btn-danger-text" onclick="quickDeleteCollecteur('${c.id}')" aria-label="Supprimer">\u2715</button>`;
+      }
+      ul.appendChild(li);
+    });
+    if (condSelectMode) updateCondSelectSummary();
+  }
+
+  async function quickDeleteRegard(id) {
+    const usedIn = conduites.filter(c => c.from === id || c.to === id);
+    let msg = 'Supprimer ce regard ?';
+    if (usedIn.length > 0) msg += ' ' + usedIn.length + ' collecteur(s) lié(s) seront aussi supprimés.';
+    if (!await customConfirm(msg, 'Supprimer')) return;
+    regards = regards.filter(r => r.id !== id);
+    conduites = conduites.filter(c => c.from !== id && c.to !== id);
+    await saveData();
+    renderAll();
+  }
+
+  async function quickDeleteCollecteur(id) {
+    if (!await customConfirm('Supprimer ce collecteur ?', 'Supprimer')) return;
+    conduites = conduites.filter(c => c.id !== id);
+    await saveData();
+    renderAll();
+  }
+
+  // Carte réduite (aperçu en haut de page) : affichage simple en lecture seule,
+  // avec étiquettes texte comme sur la carte complète.
+  function renderMap() {
+    markerLayerGroup.clearLayers();
+    lineLayerGroup.clearLayers();
+    const bounds = [];
+    regards.forEach(r => {
+      L.circleMarker([r.lat, r.lon], {
+        radius: 7, color: '#ffffff', weight: 2, fillColor: r.color || DEFAULT_REGARD_COLOR, fillOpacity: 0.95
+      }).addTo(markerLayerGroup);
+      L.marker([r.lat, r.lon], {
+        icon: L.divIcon({ className: 'map-label-regard', html: escapeHTML(r.name), iconSize: null, iconAnchor: [-10, 8] }),
+        interactive: false
+      }).addTo(markerLayerGroup);
+      bounds.push([r.lat, r.lon]);
+    });
+    conduites.forEach(c => {
+      const rFrom = regards.find(r => r.id === c.from);
+      const rTo = regards.find(r => r.id === c.to);
+      if (!rFrom || !rTo) return;
+      L.polyline([[rFrom.lat, rFrom.lon], [rTo.lat, rTo.lon]], { color: c.color || DEFAULT_COND_COLOR, weight: 4 }).addTo(lineLayerGroup);
+    });
+    if (bounds.length) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 18 });
+  }
+
+  // ----- Utils -----
+  function escapeHTML(str) {
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+  function escapeXML(str) {
+    return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[m]));
+  }
+
+  // Convertit une couleur "#rrggbb" (celle choisie dans l'app) vers le format KML
+  // "aabbggrr" (alpha puis bleu-vert-rouge, ordre inverse de d'habitude). Sans cette
+  // conversion, chaque regard/collecteur exporté gardait la même couleur unique,
+  // quelle que soit la couleur choisie dans l'app.
+  function hexToKmlColor(hex, alpha) {
+    hex = String(hex || '').replace('#', '').toLowerCase();
+    if (!/^[0-9a-f]{6}$/.test(hex)) hex = '2d6a4f';
+    const r = hex.substring(0, 2), g = hex.substring(2, 4), b = hex.substring(4, 6);
+    return (alpha || 'ff') + b + g + r;
+  }
+
+  // Cap géographique (0° = nord, sens horaire) du point 1 vers le point 2, utilisé
+  // pour orienter la flèche de sens d'écoulement exportée dans le KML.
+  function computeBearing(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+    const phi1 = toRad(lat1), phi2 = toRad(lat2), dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(phi2);
+    const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  // Distance en mètres entre 2 points WGS84 (formule de Haversine, sphère de rayon
+  // moyen terrestre) : suffisant à l'échelle d'un collecteur (quelques dizaines à
+  // centaines de mètres), l'écart avec un calcul ellipsoïdal complet y est négligeable.
+  // Utilisé pour additionner la longueur de plusieurs collecteurs sélectionnés dans la liste.
+  function haversineDistance(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180;
+    const R = 6371000; // rayon moyen terrestre, en mètres
+    const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function conduiteLength(c) {
+    const rFrom = regards.find(r => r.id === c.from);
+    const rTo = regards.find(r => r.id === c.to);
+    if (!rFrom || !rTo) return 0;
+    return haversineDistance(rFrom.lat, rFrom.lon, rTo.lat, rTo.lon);
+  }
+
+  // ----- KML export -----
+  function buildKMLString() {
+    let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n' +
+      '  <name>Diagnostic Reseau Assainissement</name>\n' +
+      '  <Folder>\n    <name>Regards</name>\n';
+
+    regards.forEach(r => {
+      const desc = 'Etat: ' + (r.etat || '-');
+      const kmlColor = hexToKmlColor(r.color || DEFAULT_REGARD_COLOR);
+      // Style défini directement dans le Placemark (au lieu d'un styleUrl partagé) :
+      // chaque regard garde ainsi SA propre couleur choisie dans l'app.
+      kml += '    <Placemark>\n      <name>' + escapeXML(r.name) + '</name>\n      <description>' + escapeXML(desc) + '</description>\n' +
+        '      <Style><IconStyle><color>' + kmlColor + '</color><scale>1.1</scale>' +
+        '<Icon><href>https://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon></IconStyle>' +
+        '<LabelStyle><color>' + kmlColor + '</color></LabelStyle></Style>\n' +
+        '      <Point><coordinates>' + r.lon + ',' + r.lat + ',0</coordinates></Point>\n    </Placemark>\n';
+    });
+
+    // Les données de chaque collecteur sont calculées une seule fois puis utilisées
+    // pour générer 2 sous-dossiers distincts (voir plus bas) : Google Earth affiche
+    // chaque <Folder> comme un calque qu'on peut afficher/masquer indépendamment, donc
+    // séparer "Tracés" et "Étiquettes" permet par exemple de masquer les étiquettes
+    // seules tout en gardant les tracés visibles.
+    const conduiteData = conduites.map(c => {
+      const rFrom = regards.find(r => r.id === c.from);
+      const rTo = regards.find(r => r.id === c.to);
+      if (!rFrom || !rTo) return null;
+      const diam = c.diameter || '-';
+      return {
+        c, diam,
+        desc: 'Sens: ' + rFrom.name + ' -> ' + rTo.name + '\nDiametre: ' + diam + ' mm',
+        kmlColor: hexToKmlColor(c.color || DEFAULT_COND_COLOR),
+        fromLon: rFrom.lon, fromLat: rFrom.lat, toLon: rTo.lon, toLat: rTo.lat,
+        midLat: (rFrom.lat + rTo.lat) / 2, midLon: (rFrom.lon + rTo.lon) / 2,
+        bearing: computeBearing(rFrom.lat, rFrom.lon, rTo.lat, rTo.lon)
+      };
+    }).filter(Boolean);
+
+    kml += '  </Folder>\n  <Folder>\n    <name>Collecteurs</name>\n    <Folder>\n      <name>Traces</name>\n';
+
+    conduiteData.forEach(d => {
+      // Le tracé du collecteur lui-même, avec SA couleur propre au lieu du style
+      // global unique utilisé auparavant.
+      kml += '      <Placemark>\n        <name>' + escapeXML(d.c.name) + '</name>\n        <description>' + escapeXML(d.desc) + '</description>\n' +
+        '        <Style><LineStyle><color>' + d.kmlColor + '</color><width>4</width></LineStyle></Style>\n' +
+        '        <LineString><coordinates>' + d.fromLon + ',' + d.fromLat + ',0 ' + d.toLon + ',' + d.toLat + ',0</coordinates></LineString>\n      </Placemark>\n';
+    });
+
+    kml += '    </Folder>\n    <Folder>\n      <name>Etiquettes et sens</name>\n';
+
+    conduiteData.forEach(d => {
+      // Point unique combinant l'étiquette (nom + diamètre, pour AutoCAD) ET la flèche
+      // de sens d'écoulement orientée (icône directionnelle avec heading, pour Google
+      // Earth) : auparavant 2 Placemarks séparés (un point d'étiquette "invisible" +
+      // un point flèche sans nom). Les fusionner en 1 seul réduit de ~1/3 le nombre
+      // total d'entités du fichier, ce qui compte vraiment : Google Earth Web bascule
+      // AUTOMATIQUEMENT (et peut ne même plus proposer d'autre choix) vers son mode
+      // "couche de données" pour les fichiers trop volumineux/complexes, qui applique
+      // UN SEUL style à toute la couche et ignore les couleurs individuelles de chaque
+      // Placemark — au lieu du mode "entités de carte", qui lui garde bien la couleur
+      // propre à chaque élément. C'est ce qui explique la perte des couleurs
+      // personnalisées, avec ce comportement qui peut varier d'un import à l'autre
+      // (donc d'un navigateur/appareil à l'autre, si le fichier est ouvert en "fichier
+      // KML local", qui n'est PAS synchronisé via Drive et n'existe que sur l'appareil
+      // où il a été ouvert).
+      // -> Conseil complémentaire, côté Google Earth cette fois : au moment d'importer
+      // le fichier, si le choix est proposé, sélectionnez "Importer comme entités de
+      // carte" plutôt que "Importer comme couche de données".
+      kml += '      <Placemark>\n        <name>' + escapeXML(d.c.name + ' (Ø' + d.diam + 'mm)') + '</name>\n        <description>' + escapeXML(d.desc) + '</description>\n' +
+        '        <Style><IconStyle><color>' + d.kmlColor + '</color><scale>0.8</scale><heading>' + d.bearing.toFixed(1) + '</heading>' +
+        '<Icon><href>https://earth.google.com/images/kml-icons/track-directional/track-0.png</href></Icon></IconStyle>' +
+        '<LabelStyle><color>' + d.kmlColor + '</color><scale>0.9</scale></LabelStyle></Style>\n' +
+        '        <Point><coordinates>' + d.midLon + ',' + d.midLat + ',0</coordinates></Point>\n      </Placemark>\n';
+    });
+
+    kml += '    </Folder>\n  </Folder>\n</Document>\n</kml>';
+    return kml;
+  }
+
+  function exportKML(forceOpenInBrowser) {
+    if (regards.length === 0) {
+      setExportStatus('Aucune donnée à exporter encore : ajoutez au moins un regard.', 'err');
+      return;
+    }
+    const kml = buildKMLString();
+    const filename = 'diagnostic-assainissement-' + new Date().toISOString().slice(0,10) + '.kml';
+    if (forceOpenInBrowser) {
+      openFileFallback(kml, 'application/vnd.google-earth.kml+xml', []);
+      return;
+    }
+    downloadFile(kml, filename, 'application/vnd.google-earth.kml+xml');
+  }
+
+  // ----- Google Drive sync -----
+  // drive.file (le scope OAuth utilisé ici) ne permet d'écrire QUE sur des fichiers
+  // créés par cette application elle-même, ou explicitement choisis via le sélecteur
+  // Google (Picker). Un fichier KML uploadé manuellement par l'utilisateur AVANT
+  // l'existence de ce bouton n'est pas "vu" par l'app : Google répond 404 au lieu
+  // d'un message de permission, par mesure de confidentialité.
+  // Solution : la première synchronisation CRÉE un nouveau fichier KML (POST), géré
+  // par cette app. Son ID est ensuite mémorisé dans le stockage local de l'artifact ;
+  // toutes les synchronisations suivantes mettent à jour (PATCH) ce même fichier.
+  const DRIVE_FILE_ID_STORAGE_KEY = 'drive-kml-file-id';
+  let driveManagedFileId = null;
+
+  // IMPORTANT — pourquoi le flux "redirection complète" plutôt qu'une popup :
+  // Google Identity Services (popup) communique le jeton d'accès à la page d'origine
+  // via window.opener / postMessage entre deux fenêtres. Quand l'app est un wrapper
+  // WebView (WebIntoApp, Appilix, etc.) et que les liens externes s'ouvrent dans le
+  // navigateur du téléphone, la popup Google s'ouvre dans un contexte totalement
+  // séparé : la communication entre les deux fenêtres est impossible, et le jeton
+  // ne revient jamais. La connexion semble alors "annulée" même après acceptation.
+  // En remplaçant la popup par une redirection complète de la page elle-même vers
+  // Google, puis retour vers cette même page avec le jeton inclus dans l'URL, on
+  // n'a plus besoin de communication entre deux fenêtres : ça fonctionne aussi bien
+  // dans un WebView qu'un navigateur classique.
+  function buildOAuthRedirectUri() {
+    // On retire tout ancien fragment (#...) pour obtenir une URL de retour stable.
+    return window.location.href.split('#')[0];
+  }
+
+  function startDriveOAuthRedirect(pendingAction) {
+    try {
+      sessionStorage.setItem(DRIVE_PENDING_ACTION_KEY, pendingAction);
+    } catch (e) { /* sessionStorage indisponible : on continue sans mémoriser */ }
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: buildOAuthRedirectUri(),
+      response_type: 'token',
+      scope: DRIVE_SCOPE,
+      include_granted_scopes: 'true',
+      prompt: 'consent'
+    });
+    window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+  }
+
+  // Au chargement de la page, vérifie si on revient juste d'un aller-retour OAuth
+  // (Google ajoute #access_token=...&expires_in=... à l'URL de redirection).
+  function checkOAuthRedirectResult() {
+    if (!window.location.hash || window.location.hash.indexOf('access_token') === -1) {
+      return false;
+    }
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const token = hashParams.get('access_token');
+    const expiresIn = parseInt(hashParams.get('expires_in') || '0', 10);
+    // Nettoie l'URL (retire le fragment contenant le jeton) sans recharger la page.
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+
+    if (!token) {
+      setDriveStatus('Connexion Google annulée ou refusée. Réessayez et acceptez l\'accès à Google Drive.', 'err');
+      return true;
+    }
+
+    driveAccessToken = token;
+    driveTokenExpiresAt = Date.now() + (expiresIn || 3600) * 1000;
+
+    let pendingAction = null;
+    try { pendingAction = sessionStorage.getItem(DRIVE_PENDING_ACTION_KEY); sessionStorage.removeItem(DRIVE_PENDING_ACTION_KEY); }
+    catch (e) { /* ignore */ }
+
+    if (pendingAction === 'sync') {
+      setDriveStatus('Connecté. Reprise de la synchronisation…', null);
+      performDriveSync();
+    }
+    return true;
+  }
+
+  function hasValidDriveToken() {
+    return !!driveAccessToken && Date.now() < driveTokenExpiresAt - 5000;
+  }
+
+  async function loadManagedFileId() {
+    if (driveManagedFileId) return driveManagedFileId;
+    const fromLocal = localLoad(DRIVE_FILE_ID_STORAGE_KEY);
+    if (fromLocal) { driveManagedFileId = fromLocal; return driveManagedFileId; }
+    if (hasStorage) {
+      try {
+        const r = await window.storage.get(DRIVE_FILE_ID_STORAGE_KEY, false);
+        if (r && r.value) { driveManagedFileId = r.value; return driveManagedFileId; }
+      } catch (e) { /* clé absente : normal au premier lancement */ }
+    }
+    return null;
+  }
+
+  async function saveManagedFileId(fileId) {
+    driveManagedFileId = fileId;
+    localSave(DRIVE_FILE_ID_STORAGE_KEY, fileId);
+    if (hasStorage) {
+      try { await window.storage.set(DRIVE_FILE_ID_STORAGE_KEY, fileId, false); }
+      catch (e) { console.warn('Impossible de mémoriser le fileId Drive (window.storage, ignoré)', e); }
+    }
+  }
+
+  async function driveCreateFile(kml) {
+    const metadata = { name: 'diagnostic-assainissement.kml', mimeType: 'application/vnd.google-earth.kml+xml' };
+    const boundary = '-------kmlsync' + Date.now();
+    const body =
+      '--' + boundary + '\r\n' +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify(metadata) + '\r\n' +
+      '--' + boundary + '\r\n' +
+      'Content-Type: application/vnd.google-earth.kml+xml\r\n\r\n' +
+      kml + '\r\n' +
+      '--' + boundary + '--';
+
+    const resp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + driveAccessToken,
+        'Content-Type': 'multipart/related; boundary=' + boundary
+      },
+      body
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error('create-failed:' + resp.status + ':' + errText);
+    }
+    const data = await resp.json();
+    return data.id;
+  }
+
+  async function drivePatchFile(fileId, kml) {
+    return fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
+      method: 'PATCH',
+      headers: {
+        'Authorization': 'Bearer ' + driveAccessToken,
+        'Content-Type': 'application/vnd.google-earth.kml+xml'
+      },
+      body: kml
+    });
+  }
+
+  function syncToDrive() {
+    if (regards.length === 0) {
+      setDriveStatus('Ajoutez au moins un regard avant de synchroniser.', 'err');
+      return;
+    }
+    if (!hasValidDriveToken()) {
+      setDriveStatus('Redirection vers la connexion Google…', null);
+      startDriveOAuthRedirect('sync');
+      return;
+    }
+    performDriveSync();
+  }
+
+  async function performDriveSync() {
+    const btn = document.getElementById('driveSyncBtn');
+    if (btn) btn.disabled = true;
+    setDriveStatus('Connecté. Envoi des données vers Google Drive…', null);
+    const kml = buildKMLString();
+    const existingId = await loadManagedFileId();
+
+    try {
+      if (existingId) {
+        // Un fichier géré par l'app existe déjà : on met simplement à jour son contenu.
+        const resp = await drivePatchFile(existingId, kml);
+        if (resp.ok) {
+          if (btn) btn.disabled = false;
+          setDriveStatus('Synchronisé ! Actualisez la carte dans Google Earth pour voir les dernières données.', 'ok');
+          return;
+        }
+        // Le fichier mémorisé n'existe plus / n'est plus accessible : on en recrée un.
+        console.warn('Fichier géré introuvable (' + resp.status + '), création d\'un nouveau fichier.');
+      }
+
+      const newFileId = await driveCreateFile(kml);
+      await saveManagedFileId(newFileId);
+      if (btn) btn.disabled = false;
+      setDriveStatus(
+        'Premier envoi réussi : un nouveau fichier KML a été créé dans votre Google Drive ("diagnostic-assainissement.kml"). ' +
+        'Ouvrez-le une fois depuis Drive avec Google Earth (clic droit > Ouvrir avec > Google Earth) pour créer votre carte définitive. ' +
+        'Les synchronisations suivantes mettront à jour automatiquement ce même fichier.',
+        'ok'
+      );
+    } catch (e) {
+      console.error('Erreur Google Drive', e);
+      if (btn) btn.disabled = false;
+      setDriveStatus('Erreur lors de l\'envoi vers Google Drive. Vérifiez votre connexion et réessayez. Détail : ' + e.message, 'err');
+    }
+  }
+
+  function setDriveStatus(msg, kind) {
+    const el = document.getElementById('driveStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-msg' + (kind === 'ok' ? ' status-ok' : kind === 'err' ? ' status-err' : '');
+  }
+
+  // ----- Téléchargement de fichier, compatible WebView d'application (WebIntoApp, etc.) -----
+  // Les WebViews Android/iOS embarqués dans les apps générées ne déclenchent souvent pas
+  // le téléchargement via Blob + URL.createObjectURL (pas de vraie fenêtre de téléchargement).
+  // On utilise donc en priorité une data: URI, beaucoup mieux supportée dans ce contexte,
+  // avec, en repli, l'ouverture du contenu dans un nouvel onglet/fenêtre que l'utilisateur
+  // pourra enregistrer manuellement (Partager / Enregistrer sous).
+  // Téléchargement de fichier, compatible WebView d'application (WebIntoApp, Appilix, etc.)
+  // Les WebViews embarqués dans les apps générées varient énormément dans ce qu'ils
+  // autorisent : certains bloquent les Blob URLs, d'autres bloquent les data: URIs sur
+  // <a download>. On essaie donc plusieurs méthodes dans l'ordre, et on s'arrête à la
+  // première qui ne lève pas d'exception, tout en gardant une trace de ce qui a été
+  // essayé pour pouvoir diagnostiquer précisément si aucune ne fonctionne.
+  function downloadFile(content, filename, mimeType) {
+    const attempts = [];
+
+    // WebViews de type Appilix (et similaires) interceptent souvent les clics sur les
+    // liens <a download> / <a href="data:..."> et les redirigent vers leur propre
+    // gestionnaire de navigation externe au lieu de déclencher un téléchargement natif :
+    // aucune erreur JS n'est levée (donc les méthodes ci-dessous "réussissent" en
+    // apparence), mais rien n'est réellement enregistré sur l'appareil. Dans ce contexte
+    // précis, ouvrir directement le contenu avec window.open() est nettement plus fiable
+    // car Appilix route cet appel vers le navigateur système (Chrome/Safari), qui lui
+    // gère correctement les data: URIs et propose "Télécharger"/"Enregistrer sous".
+    if (isLikelyAppWebView()) {
+      openFileFallback(content, mimeType, attempts);
+      return;
+    }
+
+    // Méthode 1 : Blob + URL.createObjectURL — généralement la plus fiable et la plus
+    // standard dans les navigateurs et WebViews récents.
+    try {
+      const blob = new Blob([content], { type: mimeType });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+      setExportStatus('Fichier "' + filename + '" téléchargé (méthode Blob). S\'il n\'apparaît pas, vérifiez le dossier "Téléchargements" de l\'appareil. Si rien ne se passe, utilisez le bouton "Ouvrir dans le navigateur" ci-dessous.', 'ok');
+      return;
+    } catch (e) {
+      attempts.push('Blob: ' + e.message);
+      console.error('Méthode Blob échouée', e);
+    }
+
+    // Méthode 2 : data: URI — repli si Blob est bloqué.
+    try {
+      const dataUri = 'data:' + mimeType + ';charset=utf-8,' + encodeURIComponent(content);
+      const a = document.createElement('a');
+      a.href = dataUri;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setExportStatus('Fichier "' + filename + '" téléchargé (méthode alternative). S\'il n\'apparaît pas, utilisez le bouton ci-dessous.', 'ok');
+      return;
+    } catch (e) {
+      attempts.push('data-uri: ' + e.message);
+      console.error('Méthode data: URI échouée', e);
+    }
+
+    // Méthode 3 (dernier recours) : ouvrir dans un nouvel onglet/fenêtre, l'utilisateur
+    // utilise alors le menu natif "Partager"/"Enregistrer" du navigateur ou de l'app.
+    openFileFallback(content, mimeType, attempts);
+  }
+
+  // Détecte (au mieux) un WebView d'app générée (Appilix, WebIntoApp, Median.co...)
+  // afin d'adapter la stratégie de téléchargement : ces WebViews n'exposent pas
+  // toujours "wv" dans le user-agent comme les WebViews Android standards, donc on
+  // combine plusieurs indices.
+  function isLikelyAppWebView() {
+    try {
+      const ua = navigator.userAgent || '';
+      const isAndroidWebView = /; wv\)/.test(ua) || (/Android/.test(ua) && /Version\//.test(ua));
+      const isStandaloneIOS = window.navigator.standalone === true;
+      const isDisplayModeStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+      return isAndroidWebView || isStandaloneIOS || isDisplayModeStandalone;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Ouvre le contenu dans une nouvelle fenêtre/onglet (data: URI) afin que l'utilisateur
+  // puisse utiliser le menu natif "Partager" / "Enregistrer" du navigateur ou de l'app.
+  function openFileFallback(content, mimeType, previousAttempts) {
+    try {
+      const dataUri = 'data:' + mimeType + ';charset=utf-8,' + encodeURIComponent(content);
+      const win = window.open(dataUri, '_blank');
+      if (!win) {
+        setExportStatus('Le téléchargement automatique a échoué dans cette application (fenêtres pop-up bloquées). Essayez d\'ouvrir cette page dans Chrome/Safari plutôt que dans l\'application installée.', 'err');
+      } else {
+        setExportStatus('Le fichier s\'est ouvert dans un nouvel onglet : utilisez "Partager" ou "Enregistrer sous" pour le sauvegarder.', 'ok');
+      }
+    } catch (e2) {
+      console.error('Repli ouverture fichier impossible', e2, previousAttempts);
+      setExportStatus('Le téléchargement ne fonctionne pas dans cette application. Essayez d\'ouvrir cette page dans Chrome/Safari plutôt que dans l\'application installée — le téléchargement de fichiers y est mieux supporté.', 'err');
+    }
+  }
+
+  function setExportStatus(msg, kind) {
+    const el = document.getElementById('exportStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'status-msg' + (kind === 'ok' ? ' status-ok' : kind === 'err' ? ' status-err' : '');
+  }
+
+  async function resetAll() {
+    if (!await customConfirm('Effacer toutes les données (regards et conduites) ? Cette action est irréversible.', 'Effacer')) return;
+    regards = [];
+    conduites = [];
+    clearDraftPoint();
+    await saveData();
+    renderAll();
+  }
+</script>
+</body>
+</html>
